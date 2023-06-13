@@ -25,8 +25,47 @@ Min posting list size for key 15855 with 1 vector ids
 
 ## Experiments
 
+### Hot keys
+
+Hot keys have a high impact on the search time.
+
+Hitting one of those is basically equivalent to a full scan.
+
+#### Fullscan
 ```
-Top 10 results for query SparseVector { indices: [0, 1000, 2000, 3000], values: [1.0, 0.2, 0.9, 0.5] } in 746 micros
+Top 10 results for full scan query SparseVector { indices: [0, 1000, 2000, 3000], values: [1.0, 0.2, 0.9, 0.5] } in 3851 micros
+Score 0.1808575 id 21829
+Score 0.15541957 id 19635
+Score 0.14179742 id 1056
+Score 0.13906032 id 13958
+Score 0.13815996 id 34194
+Score 0.13644157 id 16133
+Score 0.13568835 id 19144
+Score 0.13387237 id 18241
+Score 0.13109322 id 16474
+Score 0.1304516 id 22701
+```
+
+#### Index query (regular key)
+
+```
+Top 10 results for index query SparseVector { indices: [0, 1000, 2000, 3000], values: [1.0, 0.2, 0.9, 0.5] } in 883 micros
+Score 0.1808575 id 21829
+Score 0.15541957 id 19635
+Score 0.14179742 id 1056
+Score 0.13906032 id 13958
+Score 0.13815996 id 34194
+Score 0.13644157 id 16133
+Score 0.13568835 id 19144
+Score 0.13387237 id 18241
+Score 0.13109322 id 16474
+Score 0.1304516 id 22701
+```
+
+#### Index query (hot key)
+
+```
+Top 10 results for index query SparseVector { indices: [0, 1000, 2839, 3000], values: [1.0, 0.2, 0.9, 0.5] } in 3851 micros
 Score 0.1808575 id 21829
 Score 0.15541957 id 19635
 Score 0.14179742 id 1056

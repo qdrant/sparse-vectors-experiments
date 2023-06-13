@@ -1,18 +1,51 @@
-use std::cmp::Ordering;
-use std::collections::HashMap;
+use crate::index::MutableSparseVectorIndex;
+use crate::vector::{ScoredCandidate, SparseVector};
+use serde_json::{Deserializer, Value};
+use std::fs::File;
+use std::io::BufReader;
 
 #[derive(Debug)]
 pub struct SparseVectorStorage {
     sparse_vectors: Vec<Option<SparseVector>>, // ordered by id for quick access
-    sparse_vector_index: SparseVectorIndex,    // position -> posting of vector ids
+    sparse_vector_index: MutableSparseVectorIndex, // position -> posting of vector ids
 }
 
 impl SparseVectorStorage {
     pub fn new() -> SparseVectorStorage {
         SparseVectorStorage {
             sparse_vectors: Vec::new(), //
-            sparse_vector_index: SparseVectorIndex::default(),
+            sparse_vector_index: MutableSparseVectorIndex::new(),
         }
+    }
+
+    #[allow(non_snake_case)]
+    pub fn load_SPLADE_embeddings(path: &str) -> SparseVectorStorage {
+        let f = File::open(path).unwrap();
+        let reader = BufReader::new(f);
+        // steam jsonl values
+        let stream = Deserializer::from_reader(reader).into_iter::<Value>();
+
+        let mut internal_index = 0;
+        let mut storage = SparseVectorStorage::new();
+
+        for value in stream {
+            let value = value.expect("Unable to parse JSON");
+            match value {
+                Value::Object(map) => {
+                    let keys_count = map.len();
+                    let mut indices = Vec::with_capacity(keys_count);
+                    let mut values = Vec::with_capacity(keys_count);
+                    for (key, value) in map {
+                        indices.push(key.parse::<usize>().unwrap());
+                        values.push(value.as_f64().unwrap() as f32);
+                    }
+                    storage.add(internal_index, SparseVector::new(indices, values));
+                    internal_index += 1;
+                }
+                _ => panic!("Unexpected value"),
+            }
+        }
+        storage
     }
 
     pub fn add(&mut self, vector_id: usize, sparse_vector: SparseVector) {
@@ -35,7 +68,34 @@ impl SparseVectorStorage {
         }
     }
 
-    pub fn query(&self, limit: usize, sparse_vector: &SparseVector) -> Vec<ScoredCandidate> {
+    pub fn query_full_scan(
+        &self,
+        limit: usize,
+        sparse_vector: &SparseVector,
+    ) -> Vec<ScoredCandidate> {
+        let mut scored_candidates: Vec<_> = self
+            .sparse_vectors
+            .iter()
+            .enumerate()
+            .filter_map(|(id, v)| v.as_ref().map(|v| (id, v)))
+            .map(|(vector_id, vector)| {
+                // sparse dot similarity
+                let score = sparse_vector.dot_product(vector);
+                ScoredCandidate {
+                    score,
+                    vector_id,
+                    vector,
+                }
+            })
+            .collect();
+
+        // sort by score
+        scored_candidates.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap());
+        // return top n
+        scored_candidates.into_iter().take(limit).collect()
+    }
+
+    pub fn query_index(&self, limit: usize, sparse_vector: &SparseVector) -> Vec<ScoredCandidate> {
         let mut candidates = Vec::new();
         for index in &sparse_vector.indices {
             if let Some(posting) = self.sparse_vector_index.get(*index) {
@@ -145,66 +205,21 @@ impl SparseVectorStorage {
     }
 }
 
-#[derive(Debug, Default)]
-struct SparseVectorIndex {
-    map: HashMap<usize, Vec<usize>>,
-}
+#[cfg(test)]
+mod tests {
+    use crate::storage::SparseVectorStorage;
+    use crate::vector::SparseVector;
+    use crate::SPLADE_DATA_PATH;
 
-impl SparseVectorIndex {
-    pub fn get(&self, index: usize) -> Option<&Vec<usize>> {
-        self.map.get(&index)
-    }
+    #[test]
+    fn search_equivalence() {
+        let storage = SparseVectorStorage::load_SPLADE_embeddings(SPLADE_DATA_PATH);
 
-    fn add(&mut self, vector_id: usize, sparse_vector: &SparseVector) {
-        for index in &sparse_vector.indices {
-            self.map
-                .entry(*index)
-                .or_insert(Vec::new()) // init if not exists
-                .push(vector_id); // add vector id to posting list
-        }
-    }
-}
+        let limit = 10;
+        let query = SparseVector::new(vec![0, 1000, 2000, 3000], vec![1.0, 0.2, 0.9, 0.5]);
 
-#[derive(Debug)]
-pub struct ScoredCandidate<'a> {
-    pub score: f32,
-    pub vector_id: usize,
-    pub vector: &'a SparseVector,
-}
-
-#[derive(Debug)]
-pub struct SparseVector {
-    pub indices: Vec<usize>,
-    pub values: Vec<f32>,
-}
-
-impl SparseVector {
-    pub fn new(indices: Vec<usize>, values: Vec<f32>) -> SparseVector {
-        SparseVector { indices, values }
-    }
-
-    pub fn dot_product(&self, other: &SparseVector) -> f32 {
-        let mut result = 0.0;
-        let mut i = 0;
-        let mut j = 0;
-        while i < self.indices.len() && j < other.indices.len() {
-            match self.indices[i].cmp(&other.indices[j]) {
-                Ordering::Less => {
-                    // move forward in self
-                    i += 1;
-                }
-                Ordering::Equal => {
-                    // dot product
-                    result += self.values[i] * other.values[j];
-                    i += 1;
-                    j += 1;
-                }
-                Ordering::Greater => {
-                    // move forward in other
-                    j += 1;
-                }
-            }
-        }
-        result
+        let full_scan_results = storage.query_full_scan(limit, &query);
+        let index_results = storage.query_index(limit, &query);
+        assert_eq!(full_scan_results, index_results);
     }
 }

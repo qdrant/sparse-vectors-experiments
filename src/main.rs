@@ -1,49 +1,60 @@
+mod index;
 mod storage;
+mod vector;
 
-use crate::storage::{SparseVector, SparseVectorStorage};
-use serde_json::{Deserializer, Value};
-use std::fs::File;
-use std::io::BufReader;
+use crate::storage::SparseVectorStorage;
+use crate::vector::SparseVector;
+
+pub const SPLADE_DATA_PATH: &str = "./data/sparse-vectors.jsonl";
 
 fn main() {
-    let path = "./data/sparse-vectors.jsonl";
-    let f = File::open(path).unwrap();
-    let reader = BufReader::new(f);
-    // steam jsonl values
-    let stream = Deserializer::from_reader(reader).into_iter::<Value>();
-
-    let mut internal_index = 0;
-    let mut storage = SparseVectorStorage::new();
-
-    for value in stream {
-        let value = value.expect("Unable to parse JSON");
-        match value {
-            Value::Object(map) => {
-                let mut indices = Vec::new();
-                let mut values = Vec::new();
-                for (key, value) in map {
-                    indices.push(key.parse::<usize>().unwrap());
-                    values.push(value.as_f64().unwrap() as f32);
-                }
-                storage.add(internal_index, SparseVector::new(indices, values));
-                internal_index += 1;
-            }
-            _ => panic!("Unexpected value"),
-        }
-    }
+    let storage = SparseVectorStorage::load_SPLADE_embeddings(SPLADE_DATA_PATH);
 
     // print some stats about storage
     storage.print_data_statistics();
     storage.print_index_statistics();
 
-    // search
+    // search fullscan
     let now = std::time::Instant::now();
     let limit = 10;
     let query = SparseVector::new(vec![0, 1000, 2000, 3000], vec![1.0, 0.2, 0.9, 0.5]);
-    let results = storage.query(limit, &query);
+    let results = storage.query_full_scan(limit, &query);
     let elapsed = now.elapsed();
     println!(
-        "Top {} results for query {:?} in {} micros",
+        "Top {} results for full scan query {:?} in {} micros",
+        limit,
+        query,
+        elapsed.as_micros()
+    );
+    for r in results {
+        println!("Score {:?} id {}", r.score, r.vector_id);
+    }
+
+    // search happy path
+    let now = std::time::Instant::now();
+    let limit = 10;
+    let query = SparseVector::new(vec![0, 1000, 2000, 3000], vec![1.0, 0.2, 0.9, 0.5]);
+    let results = storage.query_index(limit, &query);
+    let elapsed = now.elapsed();
+    println!(
+        "Top {} results for index query {:?} in {} micros",
+        limit,
+        query,
+        elapsed.as_micros()
+    );
+    for r in results {
+        println!("Score {:?} id {}", r.score, r.vector_id);
+    }
+
+    // search hot key
+    let now = std::time::Instant::now();
+    let limit = 10;
+    // '2839' is vey hot (34461 entries)
+    let query = SparseVector::new(vec![0, 1000, 2839, 3000], vec![1.0, 0.2, 0.9, 0.5]);
+    let results = storage.query_index(limit, &query);
+    let elapsed = now.elapsed();
+    println!(
+        "Top {} results for index query {:?} in {} micros",
         limit,
         query,
         elapsed.as_micros()
