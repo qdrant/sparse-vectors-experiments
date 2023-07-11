@@ -1,4 +1,4 @@
-mod index;
+mod mutable_index;
 mod storage;
 mod vector;
 
@@ -14,7 +14,7 @@ fn main() {
     storage.print_data_statistics();
     storage.print_index_statistics();
 
-    // search fullscan
+    println!("\nSearch fullscan");
     let now = std::time::Instant::now();
     let limit = 10;
     let query = SparseVector::new(vec![0, 1000, 2000, 3000], vec![1.0, 0.2, 0.9, 0.5]);
@@ -30,7 +30,7 @@ fn main() {
         println!("Score {:?} id {}", r.score, r.vector_id);
     }
 
-    // search happy path
+    println!("\nSearch happy path");
     let now = std::time::Instant::now();
     let limit = 10;
     let query = SparseVector::new(vec![0, 1000, 2000, 3000], vec![1.0, 0.2, 0.9, 0.5]);
@@ -46,7 +46,7 @@ fn main() {
         println!("Score {:?} id {}", r.score, r.vector_id);
     }
 
-    // search hot key
+    println!("\nSearch hot key");
     let now = std::time::Instant::now();
     let limit = 10;
     // '2839' is vey hot (34461 entries)

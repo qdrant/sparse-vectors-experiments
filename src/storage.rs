@@ -1,4 +1,4 @@
-use crate::index::MutableSparseVectorIndex;
+use crate::mutable_index::MutableSparseVectorIndex;
 use crate::vector::{ScoredCandidate, SparseVector};
 use serde_json::{Deserializer, Value};
 use std::fs::File;
