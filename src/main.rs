@@ -1,6 +1,7 @@
 mod mutable_index;
 mod storage;
 mod vector;
+mod sparse_index;
 
 use crate::storage::SparseVectorStorage;
 use crate::vector::SparseVector;
