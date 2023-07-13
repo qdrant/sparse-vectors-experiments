@@ -12,7 +12,7 @@ impl InvertedIndex {
     }
 }
 
-struct InvertedIndexBuilder {
+pub struct InvertedIndexBuilder {
     postings: HashMap<u32, PostingList>,
 }
 
@@ -24,12 +24,12 @@ impl InvertedIndexBuilder {
         }
     }
 
-    pub fn add(&mut self, id: u32, posting: PostingList) {
+    pub fn add(&mut self, id: u32, posting: PostingList) -> &mut Self {
         self.postings.insert(id, posting);
+        self
     }
 
-    pub fn build(mut self) -> InvertedIndex {
-
+    pub fn build(&mut self) -> InvertedIndex {
 
         // Get sorted keys
         let mut keys: Vec<u32> = self.postings.keys().map(|k| *k).collect();
@@ -41,8 +41,9 @@ impl InvertedIndexBuilder {
         let mut postings = Vec::new();
         postings.resize(last_key as usize, PostingList::default());
 
+        // Move postings from hashmap to postings vector
         for key in keys {
-            postings.push(self.postings.remove(&key).unwrap());
+            postings.insert(key as usize, self.postings.remove(&key).unwrap());
         }
         InvertedIndex {
             postings,

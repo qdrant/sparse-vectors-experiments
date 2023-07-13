@@ -15,6 +15,13 @@ pub struct PostingList {
 }
 
 impl PostingList {
+    pub fn from_records(records: Vec<(RecordId, DimWeight)>) -> PostingList {
+        let mut posting_list = PostingBuilder::new();
+        for (id, weight) in records {
+            posting_list.add(id, weight);
+        }
+        posting_list.build()
+    }
 }
 
 

@@ -40,6 +40,7 @@ struct IndexedPostingListIterator<'a> {
 pub struct SearchContext<'a> {
     postings_iterators: Vec<IndexedPostingListIterator<'a>>,
     query: SparseVector,
+    top: usize,
     result_queue: FixedLengthPriorityQueue<ScoredCandidate>,
 }
 
@@ -57,12 +58,14 @@ impl<'a> SearchContext<'a> {
             }
         }
 
+        // TODO: sort by highest weight in one pass
         postings_iterators.sort_by_key(|i| i.posting_list_iterator.len_left());
         postings_iterators.reverse();
 
         SearchContext {
             postings_iterators,
             query,
+            top,
             result_queue: FixedLengthPriorityQueue::new(top),
         }
     }
@@ -98,10 +101,12 @@ impl<'a> SearchContext<'a> {
     /// b,  30, 34, 60, 230
 
     fn advance(&mut self) -> Option<ScoredCandidate> {
-        let mut min_record_id = 0;
+        // Initialize min record id with max value
+        let mut min_record_id = u32::MAX;
         // Indicates that posting iterators are not empty
         let mut found = false;
 
+        // Iterate first time to find min record id at the head of the posting lists
         for posting_iterator in self.postings_iterators.iter() {
             if let Some(element) = posting_iterator.posting_list_iterator.peek() {
                 found = true;
@@ -131,5 +136,133 @@ impl<'a> SearchContext<'a> {
             score,
             vector_id: min_record_id,
         })
+    }
+
+    /// Make sure the longest posting list is at the head of the posting list iterators
+    pub fn sort_posting_lists_by_len(&mut self) {
+        self.postings_iterators.sort_by_key(|i| i.posting_list_iterator.len_left());
+        self.postings_iterators.reverse();
+    }
+
+    pub fn search(&mut self) -> Vec<ScoredCandidate> {
+        // sort posting lists by length to start by longest
+        self.sort_posting_lists_by_len();
+
+        loop {
+            if let Some(candidate) = self.advance() {
+                self.result_queue.push(candidate);
+            } else {
+                // all posting list iterators are empty
+                break;
+            }
+
+            if self.result_queue.len() == self.top {
+                // we *potentially* have enough results to prune low performing posting lists
+                let min_score = self.result_queue.top().unwrap().score;
+                self.prune_longest_posting_list(min_score);
+            }
+        }
+        // TODO cleaner consumption of the queue
+        let queue = std::mem::take(&mut self.result_queue);
+        let mut values = queue.into_vec();
+         values.reverse();
+        values
+    }
+
+    /// Prune posting lists that cannot possibly contribute to the top results
+    ///  Assumes longest posting list is at the head of the posting list iterators
+    pub fn prune_longest_posting_list(&mut self, min_score: f32) {
+        let skip_to = if self.postings_iterators.len() == 1 {
+            // if there is only one posting list iterator, we can skip to the end
+            u32::MAX
+        } else {
+            // otherwise, we skip to the next element in the next longest posting list
+            let next_posting_iterator = &self.postings_iterators[1];
+            next_posting_iterator.posting_list_iterator.peek().map(|element| element.id).unwrap_or(u32::MAX)
+        };
+        let posting_iterator = &mut self.postings_iterators[0];
+        if let Some(element) = posting_iterator.posting_list_iterator.peek() {
+            let max_weight_from_list = element.weight.max(element.max_next_weight);
+            if max_weight_from_list * self.query.weights[posting_iterator.query_weight_offset] < min_score {
+                posting_iterator.posting_list_iterator.skip_to(skip_to);
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::sparse_index::inverted_index::InvertedIndexBuilder;
+    use crate::sparse_index::posting::PostingList;
+    use super::*;
+
+    #[test]
+    fn advance_basic_test() {
+        let inverted_index = InvertedIndexBuilder::new()
+            .add(1, PostingList::from_records(vec![(1, 10.0), (2, 20.0), (3, 30.0)]))
+            .add(2, PostingList::from_records(vec![(1, 10.0), (2, 20.0), (3, 30.0)]))
+            .add(3, PostingList::from_records(vec![(1, 10.0), (2, 20.0), (3, 30.0)]))
+            .build();
+
+        let mut search_context = SearchContext::new(
+            SparseVector {
+                indices: vec![1, 2, 3],
+                weights: vec![1.0, 1.0, 1.0],
+            },
+            10,
+            &inverted_index,
+        );
+
+        assert_eq!(search_context.advance(), Some(ScoredCandidate { score: 30.0, vector_id: 1 }));
+        assert_eq!(search_context.advance(), Some(ScoredCandidate { score: 60.0, vector_id: 2 }));
+        assert_eq!(search_context.advance(), Some(ScoredCandidate { score: 90.0, vector_id: 3 }));
+    }
+
+    #[test]
+    fn search() {
+        let inverted_index = InvertedIndexBuilder::new()
+            .add(1, PostingList::from_records(vec![(1, 10.0), (2, 20.0), (3, 30.0)]))
+            .add(2, PostingList::from_records(vec![(1, 10.0), (2, 20.0), (3, 30.0)]))
+            .add(3, PostingList::from_records(vec![(1, 10.0), (2, 20.0), (3, 30.0)]))
+            .build();
+
+        let mut search_context = SearchContext::new(
+            SparseVector {
+                indices: vec![1, 2, 3],
+                weights: vec![1.0, 1.0, 1.0],
+            },
+            10,
+            &inverted_index,
+        );
+
+        assert_eq!(search_context.search(), vec![
+            ScoredCandidate { score: 90.0, vector_id: 3 },
+            ScoredCandidate { score: 60.0, vector_id: 2 },
+            ScoredCandidate { score: 30.0, vector_id: 1 },
+        ]);
+    }
+
+    #[test]
+    fn search_with_pruning() {
+        let inverted_index = InvertedIndexBuilder::new()
+            .add(1, PostingList::from_records(vec![(1, 10.0), (2, 20.0), (3, 30.0), (4, 1.0), (5, 1.0), (6, 1.0), (7, 1.0), (8, 1.0), (9, 1.0)]))
+            .add(2, PostingList::from_records(vec![(1, 10.0), (2, 20.0), (3, 30.0)]))
+            .add(3, PostingList::from_records(vec![(1, 10.0), (2, 20.0), (3, 30.0)]))
+            .build();
+
+        let mut search_context = SearchContext::new(
+            SparseVector {
+                indices: vec![1, 2, 3],
+                weights: vec![1.0, 1.0, 1.0],
+            },
+            3,
+            &inverted_index,
+        );
+
+        assert_eq!(search_context.search(), vec![
+            ScoredCandidate { score: 90.0, vector_id: 3 },
+            ScoredCandidate { score: 60.0, vector_id: 2 },
+            ScoredCandidate { score: 30.0, vector_id: 1 },
+        ]);
     }
 }

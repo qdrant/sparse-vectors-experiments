@@ -6,9 +6,16 @@ use std::vec::IntoIter as VecIntoIter;
 
 /// This is a MinHeap by default - it will keep the largest elements, pop smallest
 #[derive(Clone, Debug)]
-pub struct FixedLengthPriorityQueue<T: Ord> {
+pub struct
+FixedLengthPriorityQueue<T: Ord> {
     heap: BinaryHeap<Reverse<T>>,
     length: usize,
+}
+
+impl<T: Ord> Default for FixedLengthPriorityQueue<T> {
+    fn default() -> Self {
+        Self::new(1)
+    }
 }
 
 impl<T: Ord> FixedLengthPriorityQueue<T> {
