@@ -1,7 +1,7 @@
-mod posting;
-mod types;
-mod inverted_index;
-mod search_context;
+pub mod posting;
+pub mod types;
+pub mod inverted_index;
+pub mod search_context;
 mod fixed_length_pq;
 
 

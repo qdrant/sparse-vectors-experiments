@@ -1,15 +1,10 @@
 use std::cmp::Ordering;
+use ordered_float::OrderedFloat;
 use crate::sparse_index::fixed_length_pq::FixedLengthPriorityQueue;
 use crate::sparse_index::inverted_index::InvertedIndex;
 use crate::sparse_index::posting::PostingListIterator;
-use crate::sparse_index::types::{DimId, DimWeight, RecordId};
-
-
-#[derive(Debug, PartialEq)]
-pub struct SparseVector {
-    pub indices: Vec<DimId>,
-    pub weights: Vec<DimWeight>,
-}
+use crate::sparse_index::types::{DimWeight, RecordId};
+use crate::vector::SparseVector;
 
 #[derive(Debug, PartialEq)]
 pub struct ScoredCandidate {
@@ -19,15 +14,15 @@ pub struct ScoredCandidate {
 
 impl Eq for ScoredCandidate {}
 
-impl PartialOrd<Self> for ScoredCandidate {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        self.score.partial_cmp(&other.score).map(|o| o.reverse())
+impl Ord for ScoredCandidate {
+    fn cmp(&self, other: &Self) -> Ordering {
+        OrderedFloat(self.score).cmp(&OrderedFloat(other.score))
     }
 }
 
-impl Ord for ScoredCandidate {
-    fn cmp(&self, other: &Self) -> Ordering {
-        self.partial_cmp(other).unwrap()
+impl PartialOrd for ScoredCandidate {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
     }
 }
 
@@ -41,7 +36,7 @@ pub struct SearchContext<'a> {
     postings_iterators: Vec<IndexedPostingListIterator<'a>>,
     query: SparseVector,
     top: usize,
-    result_queue: FixedLengthPriorityQueue<ScoredCandidate>,
+    result_queue: FixedLengthPriorityQueue<ScoredCandidate>, // keep the largest elements and pop smallest
 }
 
 
@@ -50,7 +45,7 @@ impl<'a> SearchContext<'a> {
         let mut postings_iterators = Vec::new();
 
         for (query_weight_offset, id) in query.indices.iter().enumerate() {
-            if let Some(posting) = inverted_index.get(*id) {
+            if let Some(posting) = inverted_index.get(id) {
                 postings_iterators.push(IndexedPostingListIterator {
                     posting_list_iterator: PostingListIterator::new(posting),
                     query_weight_offset,
@@ -150,23 +145,22 @@ impl<'a> SearchContext<'a> {
 
         loop {
             if let Some(candidate) = self.advance() {
+                // push candidate to result queue
                 self.result_queue.push(candidate);
             } else {
                 // all posting list iterators are empty
                 break;
             }
 
+            eprintln!("result queue len: {} min is {:?}", self.result_queue.len(), self.result_queue.top().map(|c| c.score));
             if self.result_queue.len() == self.top {
                 // we *potentially* have enough results to prune low performing posting lists
                 let min_score = self.result_queue.top().unwrap().score;
                 self.prune_longest_posting_list(min_score);
             }
         }
-        // TODO cleaner consumption of the queue
         let queue = std::mem::take(&mut self.result_queue);
-        let mut values = queue.into_vec();
-         values.reverse();
-        values
+        queue.into_vec()
     }
 
     /// Prune posting lists that cannot possibly contribute to the top results
@@ -183,8 +177,16 @@ impl<'a> SearchContext<'a> {
         let posting_iterator = &mut self.postings_iterators[0];
         if let Some(element) = posting_iterator.posting_list_iterator.peek() {
             let max_weight_from_list = element.weight.max(element.max_next_weight);
-            if max_weight_from_list * self.query.weights[posting_iterator.query_weight_offset] < min_score {
+            let score_contribution = max_weight_from_list * self.query.weights[posting_iterator.query_weight_offset];
+            if score_contribution  < min_score {
+                eprintln!("Skipping posting list with max weight {} and query weight {} because {} < min_score: {}",
+                          max_weight_from_list,
+                          self.query.weights[posting_iterator.query_weight_offset],
+                            score_contribution,
+                          min_score);
                 posting_iterator.posting_list_iterator.skip_to(skip_to);
+            } else {
+                eprintln!("no pruning took place")
             }
         }
     }
@@ -243,9 +245,9 @@ mod tests {
     }
 
     #[test]
-    fn search_with_pruning() {
+    fn search_with_non_balanced() {
         let inverted_index = InvertedIndexBuilder::new()
-            .add(1, PostingList::from_records(vec![(1, 10.0), (2, 20.0), (3, 30.0), (4, 1.0), (5, 1.0), (6, 1.0), (7, 1.0), (8, 1.0), (9, 1.0)]))
+            .add(1, PostingList::from_records(vec![(1, 10.0), (2, 20.0), (3, 30.0), (4, 1.0), (5, 2.0), (6, 3.0), (7, 4.0), (8, 5.0), (9, 6.0)]))
             .add(2, PostingList::from_records(vec![(1, 10.0), (2, 20.0), (3, 30.0)]))
             .add(3, PostingList::from_records(vec![(1, 10.0), (2, 20.0), (3, 30.0)]))
             .build();
@@ -263,6 +265,22 @@ mod tests {
             ScoredCandidate { score: 90.0, vector_id: 3 },
             ScoredCandidate { score: 60.0, vector_id: 2 },
             ScoredCandidate { score: 30.0, vector_id: 1 },
+        ]);
+
+        let mut search_context = SearchContext::new(
+            SparseVector {
+                indices: vec![1, 2, 3],
+                weights: vec![1.0, 1.0, 1.0],
+            },
+            4,
+            &inverted_index,
+        );
+
+        assert_eq!(search_context.search(), vec![
+            ScoredCandidate { score: 90.0, vector_id: 3 },
+            ScoredCandidate { score: 60.0, vector_id: 2 },
+            ScoredCandidate { score: 30.0, vector_id: 1 },
+            ScoredCandidate { score: 6.0, vector_id: 9 },
         ]);
     }
 }

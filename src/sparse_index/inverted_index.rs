@@ -7,8 +7,8 @@ pub struct InvertedIndex {
 }
 
 impl InvertedIndex {
-    pub fn get(&self, id: RecordId) -> Option<&PostingList> {
-        self.postings.get(id as usize)
+    pub fn get(&self, id: &RecordId) -> Option<&PostingList> {
+        self.postings.get((*id) as usize)
     }
 }
 

@@ -35,7 +35,7 @@ fn main() {
     let now = std::time::Instant::now();
     let limit = 10;
     let query = SparseVector::new(vec![0, 1000, 2000, 3000], vec![1.0, 0.2, 0.9, 0.5]);
-    let results = storage.query_index(limit, &query);
+    let results = storage.query_mutable_index(limit, &query);
     let elapsed = now.elapsed();
     println!(
         "Top {} results for index query {:?} in {} micros",
@@ -52,7 +52,7 @@ fn main() {
     let limit = 10;
     // '2839' is vey hot (34461 entries)
     let query = SparseVector::new(vec![0, 1000, 2839, 3000], vec![1.0, 0.2, 0.9, 0.5]);
-    let results = storage.query_index(limit, &query);
+    let results = storage.query_mutable_index(limit, &query);
     let elapsed = now.elapsed();
     println!(
         "Top {} results for index query {:?} in {} micros",

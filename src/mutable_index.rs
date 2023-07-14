@@ -1,9 +1,10 @@
 use crate::vector::SparseVector;
 use std::collections::HashMap;
+use crate::sparse_index::types::{DimId, RecordId};
 
 #[derive(Debug)]
 pub struct MutableSparseVectorIndex {
-    pub map: HashMap<usize, Vec<usize>>,
+    pub map: HashMap<DimId, Vec<RecordId>>,
 }
 
 impl MutableSparseVectorIndex {
@@ -13,11 +14,11 @@ impl MutableSparseVectorIndex {
         }
     }
 
-    pub fn get(&self, index: usize) -> Option<&Vec<usize>> {
-        self.map.get(&index)
+    pub fn get(&self, index: &DimId) -> Option<&Vec<RecordId>> {
+        self.map.get(index)
     }
 
-    pub fn add(&mut self, vector_id: usize, sparse_vector: &SparseVector) {
+    pub fn add(&mut self, vector_id: RecordId, sparse_vector: &SparseVector) {
         for index in &sparse_vector.indices {
             self.map
                 .entry(*index)

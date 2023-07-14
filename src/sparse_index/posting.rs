@@ -11,7 +11,7 @@ pub struct PostingElement {
 #[derive(Debug, Default, Clone)]
 pub struct PostingList {
     /// List of the posting elements ordered by id
-    elements: Vec<PostingElement>,
+    pub elements: Vec<PostingElement>,
 }
 
 impl PostingList {
