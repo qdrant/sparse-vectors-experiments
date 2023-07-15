@@ -7,7 +7,6 @@ pub struct PostingElement {
     pub max_next_weight: DimWeight,
 }
 
-
 #[derive(Debug, Default, Clone)]
 pub struct PostingList {
     /// List of the posting elements ordered by id
@@ -15,7 +14,7 @@ pub struct PostingList {
 }
 
 impl PostingList {
-    pub fn from_records(records: Vec<(RecordId, DimWeight)>) -> PostingList {
+    pub fn from(records: Vec<(RecordId, DimWeight)>) -> PostingList {
         let mut posting_list = PostingBuilder::new();
         for (id, weight) in records {
             posting_list.add(id, weight);
@@ -23,7 +22,6 @@ impl PostingList {
         posting_list.build()
     }
 }
-
 
 pub struct PostingBuilder {
     elements: Vec<PostingElement>,
@@ -37,7 +35,11 @@ impl PostingBuilder {
     }
 
     pub fn add(&mut self, id: RecordId, weight: DimWeight) {
-        self.elements.push(PostingElement { id, weight, max_next_weight: f32::NEG_INFINITY });
+        self.elements.push(PostingElement {
+            id,
+            weight,
+            max_next_weight: f32::NEG_INFINITY,
+        });
     }
 
     pub fn build(mut self) -> PostingList {
@@ -68,12 +70,10 @@ impl PostingBuilder {
     }
 }
 
-
 pub struct PostingListIterator<'a> {
     posting_list: &'a PostingList,
     current_index: usize,
 }
-
 
 impl<'a> PostingListIterator<'a> {
     pub fn new(posting_list: &'a PostingList) -> PostingListIterator<'a> {
@@ -101,7 +101,6 @@ impl<'a> PostingListIterator<'a> {
         self.posting_list.elements.len() - self.current_index
     }
 
-
     /// Tries to find the element with ID == id and returns it.
     /// If the element is not found, the iterator is advanced to the next element with ID > id
     /// and None is returned.
@@ -114,8 +113,8 @@ impl<'a> PostingListIterator<'a> {
         }
         // Use binary search to find the next element with ID > id
 
-        let next_element = self.posting_list.elements[self.current_index..]
-            .binary_search_by(|e| e.id.cmp(&id));
+        let next_element =
+            self.posting_list.elements[self.current_index..].binary_search_by(|e| e.id.cmp(&id));
 
         match next_element {
             Ok(found_offset) => {
@@ -127,6 +126,11 @@ impl<'a> PostingListIterator<'a> {
                 None
             }
         }
+    }
+
+    pub fn skip_to_end(&mut self) -> Option<&PostingElement> {
+        self.current_index = self.posting_list.elements.len();
+        None
     }
 }
 

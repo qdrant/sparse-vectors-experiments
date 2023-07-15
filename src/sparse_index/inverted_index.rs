@@ -1,6 +1,6 @@
-use std::collections::HashMap;
 use crate::sparse_index::posting::PostingList;
 use crate::sparse_index::types::RecordId;
+use std::collections::HashMap;
 
 pub struct InvertedIndex {
     postings: Vec<PostingList>,
@@ -17,7 +17,6 @@ pub struct InvertedIndexBuilder {
 }
 
 impl InvertedIndexBuilder {
-
     pub fn new() -> InvertedIndexBuilder {
         InvertedIndexBuilder {
             postings: HashMap::new(),
@@ -30,9 +29,8 @@ impl InvertedIndexBuilder {
     }
 
     pub fn build(&mut self) -> InvertedIndex {
-
         // Get sorted keys
-        let mut keys: Vec<u32> = self.postings.keys().map(|k| *k).collect();
+        let mut keys: Vec<u32> = self.postings.keys().copied().collect();
         keys.sort();
 
         let last_key = *keys.last().unwrap_or(&0);
@@ -45,8 +43,6 @@ impl InvertedIndexBuilder {
         for key in keys {
             postings.insert(key as usize, self.postings.remove(&key).unwrap());
         }
-        InvertedIndex {
-            postings,
-        }
+        InvertedIndex { postings }
     }
 }

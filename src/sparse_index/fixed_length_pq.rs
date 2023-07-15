@@ -7,19 +7,18 @@ use std::vec::IntoIter as VecIntoIter;
 
 /// This is a MinHeap by default - it will keep the largest elements, pop smallest
 #[derive(Clone, Debug)]
-pub struct
-FixedLengthPriorityQueue<T: Ord + Debug> {
+pub struct FixedLengthPriorityQueue<T: Ord> {
     heap: BinaryHeap<Reverse<T>>,
     length: usize,
 }
 
-impl<T: Ord + Debug> Default for FixedLengthPriorityQueue<T> {
+impl<T: Ord> Default for FixedLengthPriorityQueue<T> {
     fn default() -> Self {
         Self::new(1)
     }
 }
 
-impl<T: Ord + Debug> FixedLengthPriorityQueue<T> {
+impl<T: Ord> FixedLengthPriorityQueue<T> {
     pub fn new(length: usize) -> Self {
         assert!(length > 0);
         FixedLengthPriorityQueue::<T> {
@@ -95,7 +94,7 @@ impl<T> Iterator for IntoIter<T> {
     }
 }
 
-impl<'a, T: Ord + Debug> IntoIterator for &'a FixedLengthPriorityQueue<T> {
+impl<'a, T: Ord> IntoIterator for &'a FixedLengthPriorityQueue<T> {
     type Item = &'a T;
 
     type IntoIter = Iter<'a, T>;
@@ -105,7 +104,7 @@ impl<'a, T: Ord + Debug> IntoIterator for &'a FixedLengthPriorityQueue<T> {
     }
 }
 
-impl<T: Ord + Debug> IntoIterator for FixedLengthPriorityQueue<T> {
+impl<T: Ord> IntoIterator for FixedLengthPriorityQueue<T> {
     type Item = T;
 
     type IntoIter = IntoIter<T>;
@@ -117,9 +116,9 @@ impl<T: Ord + Debug> IntoIterator for FixedLengthPriorityQueue<T> {
     }
 }
 
-pub fn peek_top_smallest_iterable<I, E: Ord + Debug>(elements: I, top: usize) -> Vec<E>
-    where
-        I: IntoIterator<Item = E>,
+pub fn peek_top_smallest_iterable<I, E: Ord>(elements: I, top: usize) -> Vec<E>
+where
+    I: IntoIterator<Item = E>,
 {
     if top == 0 {
         return vec![];
@@ -134,9 +133,9 @@ pub fn peek_top_smallest_iterable<I, E: Ord + Debug>(elements: I, top: usize) ->
     pq.into_vec().into_iter().map(|Reverse(x)| x).collect()
 }
 
-pub fn peek_top_largest_iterable<I, E: Ord + Debug>(elements: I, top: usize) -> Vec<E>
-    where
-        I: IntoIterator<Item = E>,
+pub fn peek_top_largest_iterable<I, E: Ord>(elements: I, top: usize) -> Vec<E>
+where
+    I: IntoIterator<Item = E>,
 {
     if top == 0 {
         return vec![];
@@ -151,7 +150,7 @@ pub fn peek_top_largest_iterable<I, E: Ord + Debug>(elements: I, top: usize) -> 
     pq.into_vec()
 }
 
-pub fn peek_top_scores<E: Ord + Clone + Debug>(scores: &[E], top: usize) -> Vec<E> {
+pub fn peek_top_scores<E: Ord + Clone>(scores: &[E], top: usize) -> Vec<E> {
     peek_top_largest_iterable(scores.iter().cloned(), top)
 }
 

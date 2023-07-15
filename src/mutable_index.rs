@@ -1,6 +1,6 @@
+use crate::sparse_index::types::{DimId, RecordId};
 use crate::vector::SparseVector;
 use std::collections::HashMap;
-use crate::sparse_index::types::{DimId, RecordId};
 
 #[derive(Debug)]
 pub struct MutableSparseVectorIndex {

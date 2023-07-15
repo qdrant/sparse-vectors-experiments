@@ -31,49 +31,96 @@ Hot keys have a high impact on the search time.
 
 Hitting one of those is basically equivalent to a full scan.
 
-#### Fullscan
-```
-Top 10 results for full scan query SparseVector { indices: [0, 1000, 2000, 3000], values: [1.0, 0.2, 0.9, 0.5] } in 3851 micros
-Score 0.1808575 id 21829
-Score 0.15541957 id 19635
-Score 0.14179742 id 1056
-Score 0.13906032 id 13958
-Score 0.13815996 id 34194
-Score 0.13644157 id 16133
-Score 0.13568835 id 19144
-Score 0.13387237 id 18241
-Score 0.13109322 id 16474
-Score 0.1304516 id 22701
-```
-
-#### Index query (regular key)
+#### Happy path
 
 ```
-Top 10 results for index query SparseVector { indices: [0, 1000, 2000, 3000], values: [1.0, 0.2, 0.9, 0.5] } in 883 micros
-Score 0.1808575 id 21829
-Score 0.15541957 id 19635
-Score 0.14179742 id 1056
-Score 0.13906032 id 13958
-Score 0.13815996 id 34194
-Score 0.13644157 id 16133
-Score 0.13568835 id 19144
-Score 0.13387237 id 18241
-Score 0.13109322 id 16474
-Score 0.1304516 id 22701
+Search fullscan happy path (storage)
+Top 10 results for full scan query SparseVector { indices: [0, 1000, 2000, 3000], weights: [1.0, 0.2, 0.9, 0.5] } in 19417 micros
+Score 2.7671282 id 17065
+Score 2.0483174 id 12683
+Score 2.0371644 id 14102
+Score 2.0196939 id 4549
+Score 1.9788228 id 16912
+Score 1.9322071 id 1126
+Score 1.9067127 id 34838
+Score 1.8462889 id 1520
+Score 1.8256714 id 34005
+Score 1.8095042 id 19780
 ```
 
-#### Index query (hot key)
+```
+Search happy path (mutable index)
+Top 10 results for index query SparseVector { indices: [0, 1000, 2000, 3000], weights: [1.0, 0.2, 0.9, 0.5] } in 4072 micros
+Score 2.7671282 id 17065
+Score 2.0483174 id 12683
+Score 2.0371644 id 14102
+Score 2.0196939 id 4549
+Score 1.9788228 id 16912
+Score 1.9322071 id 1126
+Score 1.9067127 id 34838
+Score 1.8462889 id 1520
+Score 1.8256714 id 34005
+Score 1.8095042 id 19780
+```
 
 ```
-Top 10 results for index query SparseVector { indices: [0, 1000, 2839, 3000], values: [1.0, 0.2, 0.9, 0.5] } in 3851 micros
-Score 0.1808575 id 21829
-Score 0.15541957 id 19635
-Score 0.14179742 id 1056
-Score 0.13906032 id 13958
-Score 0.13815996 id 34194
-Score 0.13644157 id 16133
-Score 0.13568835 id 19144
-Score 0.13387237 id 18241
-Score 0.13109322 id 16474
-Score 0.1304516 id 22701
+Search happy path (immutable index)
+Top 10 results for index query SparseVector { indices: [0, 1000, 2000, 3000], weights: [1.0, 0.2, 0.9, 0.5] } in 291 micros
+Score 2.7671282 id 17065
+Score 2.0483174 id 12683
+Score 2.0371644 id 14102
+Score 2.0196939 id 4549
+Score 1.9788228 id 16912
+Score 1.9322071 id 1126
+Score 1.9067127 id 34838
+Score 1.8462889 id 1520
+Score 1.8256714 id 34005
+Score 1.8095042 id 19780
+```
+
+#### Hot key
+
+```
+Search fullscan hot key (storage)
+Top 10 results for full scan query SparseVector { indices: [0, 1000, 2839, 3000], weights: [1.0, 0.2, 0.9, 0.5] } in 22195 micros
+Score 2.034697 id 29677
+Score 2.0140328 id 11691
+Score 1.9806437 id 19080
+Score 1.9476879 id 12225
+Score 1.9174209 id 6556
+Score 1.9105625 id 7112
+Score 1.893393 id 17869
+Score 1.8832698 id 10552
+Score 1.8761885 id 6907
+Score 1.8575685 id 17411
+```
+
+```
+Search hot key (mutable index)
+Top 10 results for index query SparseVector { indices: [0, 1000, 2839, 3000], weights: [1.0, 0.2, 0.9, 0.5] } in 22151 micros
+Score 2.034697 id 29677
+Score 2.0140328 id 11691
+Score 1.9806437 id 19080
+Score 1.9476879 id 12225
+Score 1.9174209 id 6556
+Score 1.9105625 id 7112
+Score 1.893393 id 17869
+Score 1.8832698 id 10552
+Score 1.8761885 id 6907
+Score 1.8575685 id 17411
+```
+
+```
+Search hot key (immutable index)
+Top 10 results for index query SparseVector { indices: [0, 1000, 2839, 3000], weights: [1.0, 0.2, 0.9, 0.5] } in 261 micros
+Score 2.034697 id 29677
+Score 2.0140328 id 11691
+Score 1.9806437 id 19080
+Score 1.9476879 id 12225
+Score 1.9174209 id 6556
+Score 1.9105625 id 7112
+Score 1.893393 id 17869
+Score 1.8832698 id 10552
+Score 1.8761885 id 6907
+Score 1.8575685 id 17411
 ```

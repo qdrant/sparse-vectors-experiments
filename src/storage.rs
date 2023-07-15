@@ -11,7 +11,7 @@ use crate::sparse_index::types::RecordId;
 
 pub struct SparseVectorStorage {
     vectors: Vec<Option<SparseVector>>, // ordered by id for quick access
-    mutable_index: MutableSparseVectorIndex,   // position -> posting of vector ids
+    mutable_index: MutableSparseVectorIndex, // position -> posting of vector ids
     immutable_index: Option<InvertedIndex>,
 }
 
@@ -54,10 +54,12 @@ impl SparseVectorStorage {
         storage
     }
 
+    /// No upserts allowed
     pub fn add(&mut self, vector_id: usize, sparse_vector: SparseVector) {
-        self.mutable_index.add(vector_id as RecordId, &sparse_vector);
+        self.mutable_index
+            .add(vector_id as RecordId, &sparse_vector);
         match self.vectors.get_mut(vector_id) {
-            Some(current) => *current = Some(sparse_vector),
+            Some(_current) => panic!("Vector {} already exists", vector_id),
             None => {
                 // out of bounds, resize and insert
                 self.vectors.resize_with(vector_id + 1, || None);
@@ -66,18 +68,22 @@ impl SparseVectorStorage {
         }
     }
 
-    pub fn build_index(&mut self) {
+    /// Build immutable index from mutable index
+    pub fn build_immutable_index(&mut self) {
         let mut inverted_index_builder = InvertedIndexBuilder::new();
         for (position, vector_ids) in self.mutable_index.map.iter() {
             let mut posting_list_builder = PostingBuilder::new();
             for vec_id in vector_ids {
+                // get vector from storage
                 let sparse_vector = self.get(*vec_id).as_ref().expect("Vector not found");
                 if let Some(offset) = sparse_vector.indices.iter().position(|x| x == position) {
                     let weight = sparse_vector.weights[offset];
                     posting_list_builder.add(*vec_id as RecordId, weight);
+                } else {
+                    panic!("Vector {} does not contain position {}", vec_id, position);
                 }
             }
-            inverted_index_builder.add(*position as u32, posting_list_builder.build());
+            inverted_index_builder.add(*position, posting_list_builder.build());
         }
         self.immutable_index = Some(inverted_index_builder.build());
     }
@@ -93,7 +99,7 @@ impl SparseVectorStorage {
     pub fn query_full_scan(
         &self,
         limit: usize,
-        sparse_vector: &SparseVector,
+        query_vector: &SparseVector,
     ) -> Vec<ScoredCandidate> {
         let mut scored_candidates: Vec<_> = self
             .vectors
@@ -102,7 +108,7 @@ impl SparseVectorStorage {
             .filter_map(|(id, v)| v.as_ref().map(|v| (id, v)))
             .map(|(vector_id, vector)| {
                 // sparse dot similarity
-                let score = sparse_vector.dot_product(vector);
+                let score = query_vector.dot_product(vector);
                 ScoredCandidate {
                     score,
                     vector_id: vector_id as RecordId,
@@ -110,13 +116,17 @@ impl SparseVectorStorage {
             })
             .collect();
 
-        // sort by score
+        // sort by score descending
         scored_candidates.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap());
         // return top n
         scored_candidates.into_iter().take(limit).collect()
     }
 
-    pub fn query_mutable_index(&self, top: usize, query_vector: &SparseVector) -> Vec<ScoredCandidate> {
+    pub fn query_mutable_index(
+        &self,
+        top: usize,
+        query_vector: &SparseVector,
+    ) -> Vec<ScoredCandidate> {
         let mut candidates = Vec::new();
         for index in &query_vector.indices {
             if let Some(posting) = self.mutable_index.get(index) {
@@ -129,28 +139,34 @@ impl SparseVectorStorage {
         // score candidates
         let mut scored_candidates: Vec<_> = candidates
             .into_iter()
-            .filter_map(|vector_id| self.get(vector_id).as_ref().map(|v| (vector_id, v)))
-            .map(|(vector_id, vector)| {
+            .map(|vector_id| {
+                let vector = self
+                    .get(vector_id)
+                    .as_ref()
+                    .expect("must be found in storage");
                 // sparse dot similarity
                 let score = query_vector.dot_product(vector);
-                ScoredCandidate {
-                    score,
-                    vector_id,
-                }
+                ScoredCandidate { score, vector_id }
             })
             .collect();
-        // sort by score
+        // sort by score descending
         scored_candidates.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap());
+
         // return top n
         scored_candidates.into_iter().take(top).collect()
     }
 
-    pub fn query_immutable_index(&self, top: usize, query_vector: SparseVector) -> Vec<ScoredCandidate> {
-        let mut search_context = SearchContext::new(query_vector, top, &self.immutable_index.as_ref().unwrap());
+    pub fn query_immutable_index(
+        &self,
+        top: usize,
+        query_vector: SparseVector,
+    ) -> Vec<ScoredCandidate> {
+        let mut search_context =
+            SearchContext::new(query_vector, top, self.immutable_index.as_ref().unwrap());
         search_context.search()
     }
 
-    pub fn print_index_statistics(&self) {
+    pub fn print_mutable_index_statistics(&self) {
         let mut max_posting_list_size = 0;
         let mut max_posting_list_size_index = 0;
 
@@ -236,27 +252,44 @@ mod tests {
     use crate::storage::SparseVectorStorage;
     use crate::vector::SparseVector;
     use crate::SPLADE_DATA_PATH;
+    use std::sync::{OnceLock, RwLock};
 
-    // TODO load data only once
+    fn storage() -> &'static RwLock<SparseVectorStorage> {
+        static STORAGE: OnceLock<RwLock<SparseVectorStorage>> = OnceLock::new();
+        STORAGE.get_or_init(|| {
+            eprintln!("Loading test storage...");
+            let mut storage = SparseVectorStorage::load_SPLADE_embeddings(SPLADE_DATA_PATH);
+            // build immutable index
+            storage.build_immutable_index();
+            RwLock::new(storage)
+        })
+    }
 
     #[test]
     fn data_equivalence() {
-        let mut storage = SparseVectorStorage::load_SPLADE_embeddings(SPLADE_DATA_PATH);
-        // build immutable index
-        storage.build_index();
+        let storage = storage().read().unwrap();
+        let immutable_index = storage.immutable_index.as_ref().unwrap();
 
         for (vector_id, vector) in storage.vectors.iter().enumerate() {
             if let Some(vector) = vector {
-                for (index, &value) in vector.indices.iter().zip(vector.weights.iter()) {
+                for (index, &stored_weight) in vector.indices.iter().zip(vector.weights.iter()) {
                     let record_id = &(vector_id as RecordId);
                     // control data in mutable index
-                    assert!(storage.mutable_index.get(index).unwrap().contains(record_id));
+                    // mutable_index contains record_id for dimension index
+                    assert!(storage
+                        .mutable_index
+                        .get(index)
+                        .unwrap()
+                        .contains(record_id));
 
                     // control data in immutable index
-                    let posting_list = storage.immutable_index.as_ref().unwrap().get(index).unwrap();
-                    let elem_index = posting_list.elements.binary_search_by(|elem| elem.id.cmp( record_id));
+                    let posting_list = immutable_index.get(index).unwrap();
+                    let elem_index = posting_list
+                        .elements
+                        .binary_search_by(|elem| elem.id.cmp(record_id));
                     let elem = posting_list.elements[elem_index.unwrap()];
-                    assert_eq!(elem.weight, value);
+                    // immutable_index contains correct weight and record_id for dimension index
+                    assert_eq!(elem.weight, stored_weight);
                 }
             }
         }
@@ -264,20 +297,19 @@ mod tests {
 
     #[test]
     fn search_equivalence() {
-        let mut storage = SparseVectorStorage::load_SPLADE_embeddings(SPLADE_DATA_PATH);
-        // build immutable index
-        storage.build_index();
+        let storage = storage().read().unwrap();
 
         // query params
-        let limit = 10;
+        let top = 10;
         let query = SparseVector::new(vec![0, 1000, 2000, 3000], vec![1.0, 0.2, 0.9, 0.5]);
+        //let query = SparseVector::new(vec![1], vec![1.0]);
 
-        let full_scan_results = storage.query_full_scan(limit, &query);
-        let mutable_index_results = storage.query_mutable_index(limit, &query);
-        let immutable_index_results = storage.query_immutable_index(limit, query);
+        let full_scan_results = storage.query_full_scan(top, &query);
+        let mutable_index_results = storage.query_mutable_index(top, &query);
+        let immutable_index_results = storage.query_immutable_index(top, query);
+
+        // All three search methods should return the same results
         assert_eq!(full_scan_results, mutable_index_results);
-        eprintln!("Full scan results: {:?}", full_scan_results);
-        eprintln!("Immutable index results: {:?}", immutable_index_results);
         assert_eq!(full_scan_results, immutable_index_results);
     }
 }
