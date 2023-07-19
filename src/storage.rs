@@ -359,10 +359,22 @@ mod tests {
             .zip(mutable_index_results)
             .zip(immutable_index_results)
         {
-            eprintln!("i:{} full_scan: {:?} mutable: {:?}, immutable:{:?}", i, full.score, mutable.score, immutable.score);
+            //eprintln!("i:{} full_scan: {:?} mutable: {:?}, immutable:{:?}", i, full.score, mutable.score, immutable.score);
             // https://docs.rs/float-cmp/latest/float_cmp/
-            assert!(approx_eq!(f32, full.score, mutable.score));
-            assert!(approx_eq!(f32, full.score, immutable.score));
+            assert!(
+                approx_eq!(f32, full.score, mutable.score),
+                "i:{} full_scan: {:?}, mutable: {:?}",
+                i,
+                full.score,
+                mutable.score
+            );
+            assert!(
+                approx_eq!(f32, full.score, immutable.score),
+                "i:{} full_scan: {:?}, immutable:{:?}",
+                i,
+                full.score,
+                immutable.score
+            );
         }
     }
 
@@ -370,10 +382,13 @@ mod tests {
     impl Arbitrary for SparseVector {
         fn arbitrary(g: &mut Gen) -> SparseVector {
             // max u8	255
-            // max u16	65_535
             let len = u8::arbitrary(g);
+            // max u16	65_535
             let indices = (0..len).map(|_| u16::arbitrary(g) as u32).collect();
-            let weights = (0..len).map(|_| f32::arbitrary(g)).collect();
+            // restrict weights to be < 100 to avoid really high scores
+            let weights = (0..len)
+                .map(|_| f32::arbitrary(g).clamp(0.0, 100.0))
+                .collect();
             SparseVector::new(indices, weights)
         }
     }
