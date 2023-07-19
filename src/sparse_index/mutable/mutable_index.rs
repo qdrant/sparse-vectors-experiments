@@ -1,5 +1,5 @@
-use crate::sparse_index::types::{DimId, RecordId};
-use crate::vector::SparseVector;
+use crate::sparse_index::common::types::{DimId, RecordId};
+use crate::sparse_index::common::vector::SparseVector;
 use std::collections::HashMap;
 
 #[derive(Debug)]

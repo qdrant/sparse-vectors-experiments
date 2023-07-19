@@ -10,6 +10,7 @@
 ## Statistics
 
 ```
+Storage statistics:
 Data size: 34880 sparse vectors
 Max sparse index: 30265
 Min sparse index: 100
@@ -18,9 +19,16 @@ Min sparse value: 0.00000023841855
 Max sparse vector length: 480
 Min sparse length: 32
 Avg sparse length: 278.5090883027523
+
+Mutable sparse vector statistics:
 Index size: 26372 keys
 Max posting list size for key 2839 with 34461 vector ids
-Min posting list size for key 15855 with 1 vector ids
+Min posting list size for key 27186 with 1 vector ids
+
+Immutable sparse vector statistics:
+Index size: 26372 keys
+Max posting list size for key 2839 with 34461 vector ids
+Min posting list size for key 1026 with 1 vector ids
 ```
 
 ## Experiments

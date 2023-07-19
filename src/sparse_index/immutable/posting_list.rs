@@ -1,4 +1,4 @@
-use crate::sparse_index::types::{DimWeight, RecordId};
+use crate::sparse_index::common::types::{DimWeight, RecordId};
 
 #[derive(Debug, Copy, Clone)]
 pub struct PostingElement {
@@ -14,6 +14,7 @@ pub struct PostingList {
 }
 
 impl PostingList {
+    #[cfg(test)]
     pub fn from(records: Vec<(RecordId, DimWeight)>) -> PostingList {
         let mut posting_list = PostingBuilder::new();
         for (id, weight) in records {

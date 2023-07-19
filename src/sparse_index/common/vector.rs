@@ -1,4 +1,4 @@
-use crate::sparse_index::types::{DimId, DimWeight};
+use crate::sparse_index::common::types::{DimId, DimWeight};
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct SparseVector {

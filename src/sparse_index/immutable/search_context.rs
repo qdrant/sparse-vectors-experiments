@@ -1,30 +1,8 @@
-use crate::sparse_index::fixed_length_pq::FixedLengthPriorityQueue;
-use crate::sparse_index::inverted_index::InvertedIndex;
-use crate::sparse_index::posting::PostingListIterator;
-use crate::sparse_index::types::{DimWeight, RecordId};
-use crate::vector::SparseVector;
-use ordered_float::OrderedFloat;
-use std::cmp::Ordering;
-
-#[derive(Debug, PartialEq)]
-pub struct ScoredCandidate {
-    pub score: DimWeight,
-    pub vector_id: RecordId,
-}
-
-impl Eq for ScoredCandidate {}
-
-impl Ord for ScoredCandidate {
-    fn cmp(&self, other: &Self) -> Ordering {
-        OrderedFloat(self.score).cmp(&OrderedFloat(other.score))
-    }
-}
-
-impl PartialOrd for ScoredCandidate {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(other))
-    }
-}
+use crate::sparse_index::common::fixed_length_pq::FixedLengthPriorityQueue;
+use crate::sparse_index::common::scored_candidate::ScoredCandidate;
+use crate::sparse_index::common::vector::SparseVector;
+use crate::sparse_index::immutable::inverted_index::InvertedIndex;
+use crate::sparse_index::immutable::posting_list::PostingListIterator;
 
 struct IndexedPostingListIterator<'a> {
     posting_list_iterator: PostingListIterator<'a>,
@@ -54,7 +32,6 @@ impl<'a> SearchContext<'a> {
                 });
             }
         }
-
         let result_queue = FixedLengthPriorityQueue::new(top);
 
         SearchContext {
@@ -139,10 +116,12 @@ impl<'a> SearchContext<'a> {
 
     /// Make sure the longest posting list is at the head of the posting list iterators
     pub fn sort_posting_lists_by_len(&mut self) {
-        // TODO: sort by longest remaining in one pass
-        self.postings_iterators
-            .sort_by_key(|i| i.posting_list_iterator.len_left());
-        self.postings_iterators.reverse();
+        // decreasing order
+        self.postings_iterators.sort_by(|a, b| {
+            b.posting_list_iterator
+                .len_left()
+                .cmp(&a.posting_list_iterator.len_left())
+        });
     }
 
     pub fn search(&mut self) -> Vec<ScoredCandidate> {
@@ -171,7 +150,8 @@ impl<'a> SearchContext<'a> {
 
     /// Prune posting lists that cannot possibly contribute to the top results
     ///  Assumes longest posting list is at the head of the posting list iterators
-    pub fn prune_longest_posting_list(&mut self, min_score: f32) {
+    /// Returns true if the longest posting list was pruned
+    pub fn prune_longest_posting_list(&mut self, min_score: f32) -> bool {
         let skip_to = if self.postings_iterators.len() == 1 {
             // if there is only one posting list iterator, we can skip to the end
             None
@@ -188,27 +168,23 @@ impl<'a> SearchContext<'a> {
             let max_score_contribution =
                 max_weight_from_list * self.query.weights[posting_query_offset];
             if max_score_contribution < min_score {
-                // eprintln!("Skipping posting list for {} with max weight {} and query weight {} because {} < min_score: {} skipping to {:?}",
-                //       posting_query_offset,
-                //       max_weight_from_list,
-                //       self.query.weights[posting_query_offset],
-                //       max_score_contribution,
-                //       min_score,
-                //       skip_to);
                 match skip_to {
                     None => posting_iterator.posting_list_iterator.skip_to_end(),
                     Some(skip_to) => posting_iterator.posting_list_iterator.skip_to(skip_to),
                 };
+                return true;
             }
         };
+        // no pruning occurred
+        false
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sparse_index::inverted_index::InvertedIndexBuilder;
-    use crate::sparse_index::posting::PostingList;
+    use crate::sparse_index::immutable::inverted_index::InvertedIndexBuilder;
+    use crate::sparse_index::immutable::posting_list::PostingList;
 
     #[test]
     fn advance_basic_test() {
@@ -287,7 +263,7 @@ mod tests {
     }
 
     #[test]
-    fn search_with_non_balanced() {
+    fn search_with_hot_key() {
         let inverted_index = InvertedIndexBuilder::new()
             .add(
                 1,
@@ -363,6 +339,108 @@ mod tests {
                     vector_id: 9
                 },
             ]
+        );
+    }
+
+    #[test]
+    fn prune_test() {
+        let inverted_index = InvertedIndexBuilder::new()
+            .add(
+                1,
+                PostingList::from(vec![
+                    (1, 10.0),
+                    (2, 20.0),
+                    (3, 30.0),
+                    (4, 1.0),
+                    (5, 2.0),
+                    (6, 3.0),
+                    (7, 4.0),
+                    (8, 5.0),
+                    (9, 6.0),
+                ]),
+            )
+            .add(2, PostingList::from(vec![(1, 10.0), (2, 20.0), (3, 30.0)]))
+            .add(3, PostingList::from(vec![(1, 10.0), (2, 20.0), (3, 30.0)]))
+            .build();
+
+        let mut search_context = SearchContext::new(
+            SparseVector {
+                indices: vec![1, 2, 3],
+                weights: vec![1.0, 1.0, 1.0],
+            },
+            3,
+            &inverted_index,
+        );
+
+        // initial state
+        assert_eq!(
+            search_context.postings_iterators[0]
+                .posting_list_iterator
+                .len_left(),
+            9
+        );
+        assert_eq!(
+            search_context.advance(),
+            Some(ScoredCandidate {
+                score: 30.0,
+                vector_id: 1
+            })
+        );
+        assert_eq!(
+            search_context.postings_iterators[0]
+                .posting_list_iterator
+                .len_left(),
+            8
+        );
+        assert!(!search_context.prune_longest_posting_list(30.0));
+        assert_eq!(
+            search_context.postings_iterators[0]
+                .posting_list_iterator
+                .len_left(),
+            8
+        );
+
+        assert_eq!(
+            search_context.advance(),
+            Some(ScoredCandidate {
+                score: 60.0,
+                vector_id: 2
+            })
+        );
+        assert_eq!(
+            search_context.postings_iterators[0]
+                .posting_list_iterator
+                .len_left(),
+            7
+        );
+        assert!(!search_context.prune_longest_posting_list(30.0));
+        assert_eq!(
+            search_context.postings_iterators[0]
+                .posting_list_iterator
+                .len_left(),
+            7
+        );
+
+        assert_eq!(
+            search_context.advance(),
+            Some(ScoredCandidate {
+                score: 90.0,
+                vector_id: 3
+            })
+        );
+        // pruning can take place
+        assert_eq!(
+            search_context.postings_iterators[0]
+                .posting_list_iterator
+                .len_left(),
+            6
+        );
+        assert!(search_context.prune_longest_posting_list(30.0));
+        assert_eq!(
+            search_context.postings_iterators[0]
+                .posting_list_iterator
+                .len_left(),
+            0
         );
     }
 }

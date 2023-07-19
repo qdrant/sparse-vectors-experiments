@@ -1,13 +1,15 @@
-use crate::mutable_index::MutableSparseVectorIndex;
-use crate::vector::SparseVector;
+use crate::sparse_index::common::scored_candidate::ScoredCandidate;
+use crate::sparse_index::common::types::RecordId;
+use crate::sparse_index::common::vector::SparseVector;
+use crate::sparse_index::immutable::inverted_index::{InvertedIndex, InvertedIndexBuilder};
+use crate::sparse_index::immutable::posting_list::PostingBuilder;
+use crate::sparse_index::immutable::search_context::SearchContext;
+use ordered_float::OrderedFloat;
 use serde_json::{Deserializer, Value};
 use std::fs::File;
 use std::io::BufReader;
 
-use crate::sparse_index::inverted_index::{InvertedIndex, InvertedIndexBuilder};
-use crate::sparse_index::posting::PostingBuilder;
-use crate::sparse_index::search_context::{ScoredCandidate, SearchContext};
-use crate::sparse_index::types::RecordId;
+use crate::sparse_index::mutable::mutable_index::MutableSparseVectorIndex;
 
 pub struct SparseVectorStorage {
     vectors: Vec<Option<SparseVector>>, // ordered by id for quick access
@@ -117,7 +119,7 @@ impl SparseVectorStorage {
             .collect();
 
         // sort by score descending
-        scored_candidates.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap());
+        scored_candidates.sort_by(|a, b| OrderedFloat(b.score).cmp(&OrderedFloat(a.score)));
         // return top n
         scored_candidates.into_iter().take(limit).collect()
     }
@@ -150,7 +152,7 @@ impl SparseVectorStorage {
             })
             .collect();
         // sort by score descending
-        scored_candidates.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap());
+        scored_candidates.sort_by(|a, b| OrderedFloat(b.score).cmp(&OrderedFloat(a.score)));
 
         // return top n
         scored_candidates.into_iter().take(top).collect()
@@ -184,7 +186,45 @@ impl SparseVectorStorage {
                 min_posting_list_size_index = *k;
             }
         }
+        println!("\nMutable sparse vector statistics:");
         println!("Index size: {} keys", self.mutable_index.map.len());
+        println!(
+            "Max posting list size for key {} with {} vector ids",
+            max_posting_list_size_index, max_posting_list_size
+        );
+        println!(
+            "Min posting list size for key {} with {} vector ids",
+            min_posting_list_size_index, min_posting_list_size
+        );
+    }
+
+    pub fn print_immutable_index_statistics(&self) {
+        let mut max_posting_list_size = 0;
+        let mut max_posting_list_size_index = 0;
+
+        let mut min_posting_list_size = usize::MAX;
+        let mut min_posting_list_size_index = 0;
+
+        let index = self.immutable_index.as_ref().unwrap();
+        let mut index_size = 0;
+        for (k, posting) in index.postings.iter().enumerate() {
+            let size = posting.elements.len();
+            // exclude empty placeholder posting lists
+            if size > 0 {
+                index_size += 1;
+                if size > max_posting_list_size {
+                    max_posting_list_size = size;
+                    max_posting_list_size_index = k;
+                }
+                if size < min_posting_list_size {
+                    min_posting_list_size = size;
+                    min_posting_list_size_index = k;
+                }
+            }
+        }
+
+        println!("\nImmutable sparse vector statistics:");
+        println!("Index size: {} keys", index_size);
         println!(
             "Max posting list size for key {} with {} vector ids",
             max_posting_list_size_index, max_posting_list_size
@@ -232,6 +272,7 @@ impl SparseVectorStorage {
             }
             vector_count += 1;
         }
+        println!("\nStorage statistics:");
         println!("Data size: {} sparse vectors", vector_count);
         println!("Max sparse index: {}", max_index);
         println!("Min sparse index: {}", min_index);
@@ -248,10 +289,13 @@ impl SparseVectorStorage {
 
 #[cfg(test)]
 mod tests {
-    use crate::sparse_index::types::RecordId;
+    use crate::sparse_index::common::types::RecordId;
+    use crate::sparse_index::common::vector::SparseVector;
     use crate::storage::SparseVectorStorage;
-    use crate::vector::SparseVector;
     use crate::SPLADE_DATA_PATH;
+    use ordered_float::OrderedFloat;
+    use quickcheck::{Arbitrary, Gen};
+    use quickcheck_macros::quickcheck;
     use std::sync::{OnceLock, RwLock};
 
     fn storage() -> &'static RwLock<SparseVectorStorage> {
@@ -266,7 +310,7 @@ mod tests {
     }
 
     #[test]
-    fn data_equivalence() {
+    fn validate_data_equivalence() {
         let storage = storage().read().unwrap();
         let immutable_index = storage.immutable_index.as_ref().unwrap();
 
@@ -295,21 +339,48 @@ mod tests {
         }
     }
 
-    #[test]
-    fn search_equivalence() {
+    #[quickcheck]
+    fn validate_search_equivalence(top: i8, query: SparseVector) {
+        // skip top zero
+        if top == 0 {
+            return;
+        }
         let storage = storage().read().unwrap();
 
-        // query params
-        let top = 10;
-        let query = SparseVector::new(vec![0, 1000, 2000, 3000], vec![1.0, 0.2, 0.9, 0.5]);
-        //let query = SparseVector::new(vec![1], vec![1.0]);
+        // results from all three search methods
+        let full_scan_results = storage.query_full_scan(top as usize, &query);
+        let mutable_index_results = storage.query_mutable_index(top as usize, &query);
+        let immutable_index_results = storage.query_immutable_index(top as usize, query);
 
-        let full_scan_results = storage.query_full_scan(top, &query);
-        let mutable_index_results = storage.query_mutable_index(top, &query);
-        let immutable_index_results = storage.query_immutable_index(top, query);
+        // The ties are not broken in any way, so the order of results may differ in terms of vector ids
+        for (((i, full), mutable), immutable) in full_scan_results
+            .iter()
+            .enumerate()
+            .zip(mutable_index_results)
+            .zip(immutable_index_results)
+        {
+            assert_eq!(
+                OrderedFloat(full.score),
+                OrderedFloat(mutable.score),
+                "full_scan_results != mutable_index_results for result {}",
+                i
+            );
+            assert_eq!(
+                OrderedFloat(full.score),
+                OrderedFloat(immutable.score),
+                "full_scan_results != immutable_index_results for result {}",
+                i
+            );
+        }
+    }
 
-        // All three search methods should return the same results
-        assert_eq!(full_scan_results, mutable_index_results);
-        assert_eq!(full_scan_results, immutable_index_results);
+    // quickcheck arbitrary impls
+    impl Arbitrary for SparseVector {
+        fn arbitrary(g: &mut Gen) -> SparseVector {
+            let len = u8::arbitrary(g);
+            let indices = (0..len).map(|_| u16::arbitrary(g) as u32).collect();
+            let weights = (0..len).map(|_| f32::arbitrary(g)).collect();
+            SparseVector::new(indices, weights)
+        }
     }
 }

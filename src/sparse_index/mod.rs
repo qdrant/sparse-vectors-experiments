@@ -1,5 +1,3 @@
-mod fixed_length_pq;
-pub mod inverted_index;
-pub mod posting;
-pub mod search_context;
-pub mod types;
+pub mod common;
+pub mod immutable;
+pub mod mutable;

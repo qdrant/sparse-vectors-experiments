@@ -1,10 +1,8 @@
-mod mutable_index;
 mod sparse_index;
 mod storage;
-mod vector;
 
 use crate::storage::SparseVectorStorage;
-use crate::vector::SparseVector;
+use sparse_index::common::vector::SparseVector;
 
 pub const SPLADE_DATA_PATH: &str = "./data/sparse-vectors.jsonl";
 
@@ -12,9 +10,10 @@ fn main() {
     let mut storage = SparseVectorStorage::load_SPLADE_embeddings(SPLADE_DATA_PATH);
     storage.build_immutable_index();
 
-    // print some stats about storage
+    // print some stats about storage & indexes
     storage.print_data_statistics();
     storage.print_mutable_index_statistics();
+    storage.print_immutable_index_statistics();
 
     println!("\nSearch fullscan happy path (storage)");
     let now = std::time::Instant::now();

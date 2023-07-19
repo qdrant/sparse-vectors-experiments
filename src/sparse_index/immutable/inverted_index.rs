@@ -1,9 +1,9 @@
-use crate::sparse_index::posting::PostingList;
-use crate::sparse_index::types::RecordId;
+use crate::sparse_index::common::types::RecordId;
+use crate::sparse_index::immutable::posting_list::PostingList;
 use std::collections::HashMap;
 
 pub struct InvertedIndex {
-    postings: Vec<PostingList>,
+    pub postings: Vec<PostingList>,
 }
 
 impl InvertedIndex {
