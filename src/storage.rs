@@ -293,7 +293,7 @@ mod tests {
     use crate::sparse_index::common::vector::SparseVector;
     use crate::storage::SparseVectorStorage;
     use crate::SPLADE_DATA_PATH;
-    use ordered_float::OrderedFloat;
+    use float_cmp::approx_eq;
     use quickcheck::{Arbitrary, Gen};
     use quickcheck_macros::quickcheck;
     use std::sync::{OnceLock, RwLock};
@@ -340,8 +340,8 @@ mod tests {
     }
 
     #[quickcheck]
-    fn validate_search_equivalence(top: i8, query: SparseVector) {
-        // skip top zero
+    fn validate_search_equivalence(top: u8, query: SparseVector) {
+        // skip top zero (max 256)
         if top == 0 {
             return;
         }
@@ -359,24 +359,18 @@ mod tests {
             .zip(mutable_index_results)
             .zip(immutable_index_results)
         {
-            assert_eq!(
-                OrderedFloat(full.score),
-                OrderedFloat(mutable.score),
-                "full_scan_results != mutable_index_results for result {}",
-                i
-            );
-            assert_eq!(
-                OrderedFloat(full.score),
-                OrderedFloat(immutable.score),
-                "full_scan_results != immutable_index_results for result {}",
-                i
-            );
+            eprintln!("i:{} full_scan: {:?} mutable: {:?}, immutable:{:?}", i, full.score, mutable.score, immutable.score);
+            // https://docs.rs/float-cmp/latest/float_cmp/
+            assert!(approx_eq!(f32, full.score, mutable.score));
+            assert!(approx_eq!(f32, full.score, immutable.score));
         }
     }
 
     // quickcheck arbitrary impls
     impl Arbitrary for SparseVector {
         fn arbitrary(g: &mut Gen) -> SparseVector {
+            // max u8	255
+            // max u16	65_535
             let len = u8::arbitrary(g);
             let indices = (0..len).map(|_| u16::arbitrary(g) as u32).collect();
             let weights = (0..len).map(|_| f32::arbitrary(g)).collect();
