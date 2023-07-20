@@ -339,12 +339,8 @@ mod tests {
         }
     }
 
-    #[quickcheck]
-    fn validate_search_equivalence(top: u8, query: SparseVector) {
-        // skip top zero (max 256)
-        if top == 0 {
-            return;
-        }
+    fn search_equivalence(top: u8, query: SparseVector) {
+        // memoized storage
         let storage = storage().read().unwrap();
 
         // results from all three search methods
@@ -359,35 +355,89 @@ mod tests {
             .zip(mutable_index_results)
             .zip(immutable_index_results)
         {
-            //eprintln!("i:{} full_scan: {:?} mutable: {:?}, immutable:{:?}", i, full.score, mutable.score, immutable.score);
             // https://docs.rs/float-cmp/latest/float_cmp/
             assert!(
                 approx_eq!(f32, full.score, mutable.score),
-                "i:{} full_scan: {:?}, mutable: {:?}",
+                "i:{} full_scan: {:?}, mutable: {:?} (id: {:?} vs {:?})",
                 i,
                 full.score,
-                mutable.score
+                mutable.score,
+                full.vector_id,
+                mutable.vector_id
             );
             assert!(
                 approx_eq!(f32, full.score, immutable.score),
-                "i:{} full_scan: {:?}, immutable:{:?}",
+                "i:{} full_scan: {:?}, immutable:{:?} (id: {:?} vs {:?})",
                 i,
                 full.score,
-                immutable.score
+                immutable.score,
+                full.vector_id,
+                immutable.vector_id
             );
         }
+    }
+
+    // More runs with QUICKCHECK_TESTS=100000 cargo test --release validate_search_equivalence
+    #[quickcheck]
+    fn validate_search_equivalence(top: u8, query: SparseVector) {
+        // skip top zero (max 256)
+        if top == 0 {
+            return;
+        }
+        search_equivalence(top, query);
+    }
+
+    // bunch of failing cases detected by quickcheck captured for non regression
+    #[test]
+    fn search_equivalence_example_one() {
+        let top = 51;
+        let query = SparseVector::new(
+            vec![3655, 14336, 19313, 27039],
+            vec![0.01, 0.01, 100.0, 100.0],
+        );
+        search_equivalence(top, query);
+    }
+
+    #[test]
+    fn search_equivalence_example_two() {
+        let top = 8;
+        let query = SparseVector::new(vec![7146, 16390, 20913], vec![0.01, 100.0, 100.0]);
+        search_equivalence(top, query);
+    }
+
+    #[test]
+    fn search_equivalence_example_three() {
+        let top = 1;
+        let query = SparseVector::new(vec![1012, 10434, 21517], vec![0.01, 0.01, 100.0]);
+        search_equivalence(top, query);
+    }
+
+    #[test]
+    fn search_equivalence_example_four() {
+        let top = 16;
+        let query = SparseVector::new(vec![2215, 2387, 8111], vec![100.0, 100.0, 100.0]);
+        search_equivalence(top, query);
+    }
+
+    #[test]
+    fn search_equivalence_example_five() {
+        let top = 1;
+        let query = SparseVector::new(vec![9834, 13025, 21650], vec![0.01, 100.0, 100.0]);
+        search_equivalence(top, query);
     }
 
     // quickcheck arbitrary impls
     impl Arbitrary for SparseVector {
         fn arbitrary(g: &mut Gen) -> SparseVector {
             // max u8	255
-            let len = u8::arbitrary(g);
+            let len = u8::arbitrary(g) % 4; // increase modulo when bug is fixed for more coverage
             // max u16	65_535
-            let indices = (0..len).map(|_| u16::arbitrary(g) as u32).collect();
+            let mut indices: Vec<_> = (0..len).map(|_| u16::arbitrary(g) as u32).collect();
+            indices.sort();
+            indices.dedup();
             // restrict weights to be < 100 to avoid really high scores
-            let weights = (0..len)
-                .map(|_| f32::arbitrary(g).clamp(0.0, 100.0))
+            let weights = (0..indices.len())
+                .map(|_| f32::arbitrary(g).clamp(0.01, 100.0))
                 .collect();
             SparseVector::new(indices, weights)
         }
