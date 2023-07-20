@@ -429,15 +429,16 @@ mod tests {
     // quickcheck arbitrary impls
     impl Arbitrary for SparseVector {
         fn arbitrary(g: &mut Gen) -> SparseVector {
-            // max u8	255
-            let len = u8::arbitrary(g) % 4; // increase modulo when bug is fixed for more coverage
-            // max u16	65_535
+            // max u8 = 255
+            let len = u8::arbitrary(g);
+            // max u16 = 65_535
             let mut indices: Vec<_> = (0..len).map(|_| u16::arbitrary(g) as u32).collect();
+            // remove potential duplicates indices
             indices.sort();
             indices.dedup();
             // restrict weights to be < 100 to avoid really high scores
             let weights = (0..indices.len())
-                .map(|_| f32::arbitrary(g).clamp(0.01, 100.0))
+                .map(|_| f32::arbitrary(g).clamp(0.0, 100.0))
                 .collect();
             SparseVector::new(indices, weights)
         }

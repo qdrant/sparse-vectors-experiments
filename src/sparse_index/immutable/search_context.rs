@@ -4,7 +4,7 @@ use crate::sparse_index::common::vector::SparseVector;
 use crate::sparse_index::immutable::inverted_index::InvertedIndex;
 use crate::sparse_index::immutable::posting_list::PostingListIterator;
 
-struct IndexedPostingListIterator<'a> {
+pub struct IndexedPostingListIterator<'a> {
     posting_list_iterator: PostingListIterator<'a>,
     query_weight_offset: usize,
 }
@@ -72,24 +72,7 @@ impl<'a> SearchContext<'a> {
     /// b,  21, 34, 60, 200
     /// b,  30, 34, 60, 230
     fn advance(&mut self) -> Option<ScoredCandidate> {
-        // Initialize min record id with max value
-        let mut min_record_id = u32::MAX;
-        // Indicates that posting iterators are not empty
-        let mut found = false;
-
-        // Iterate first time to find min record id at the head of the posting lists
-        for posting_iterator in self.postings_iterators.iter() {
-            if let Some(element) = posting_iterator.posting_list_iterator.peek() {
-                found = true;
-                if element.id < min_record_id {
-                    min_record_id = element.id;
-                }
-            }
-        }
-
-        if !found {
-            return None;
-        }
+        let min_record_id = Self::next_min(&self.postings_iterators)?;
         let mut score = 0.0;
 
         // Iterate second time to advance posting iterators
@@ -114,6 +97,28 @@ impl<'a> SearchContext<'a> {
         })
     }
 
+    pub fn next_min(to_inspect: &[IndexedPostingListIterator<'_>]) -> Option<u32> {
+        // Initialize min record id with max value
+        let mut min_record_id = u32::MAX;
+        // Indicates that posting iterators are not empty
+        let mut found = false;
+
+        // Iterate first time to find min record id at the head of the posting lists
+        for posting_iterator in to_inspect.iter() {
+            if let Some(element) = posting_iterator.posting_list_iterator.peek() {
+                found = true;
+                if element.id < min_record_id {
+                    min_record_id = element.id;
+                }
+            }
+        }
+
+        if !found {
+            return None;
+        }
+        Some(min_record_id)
+    }
+
     /// Make sure the longest posting list is at the head of the posting list iterators
     pub fn sort_posting_lists_by_len(&mut self) {
         // decreasing order
@@ -125,21 +130,18 @@ impl<'a> SearchContext<'a> {
     }
 
     pub fn search(&mut self) -> Vec<ScoredCandidate> {
-        loop {
-            // sort posting lists by length to start by longest
-            self.sort_posting_lists_by_len();
+        while let Some(candidate) = self.advance() {
+            // push candidate to result queue
+            self.result_queue.push(candidate);
 
-            if let Some(candidate) = self.advance() {
-                // push candidate to result queue
-                self.result_queue.push(candidate);
-            } else {
-                // all posting list iterators are empty
-                break;
-            }
-
+            // we potentially have enough results to prune low performing posting lists
             if self.result_queue.len() == self.top {
-                // we *potentially* have enough results to prune low performing posting lists
+                // current min score
                 let min_score = self.result_queue.top().unwrap().score;
+
+                // sort posting lists by length to try to prune the longest one
+                self.sort_posting_lists_by_len();
+
                 self.prune_longest_posting_list(min_score);
             }
         }
@@ -149,18 +151,18 @@ impl<'a> SearchContext<'a> {
     }
 
     /// Prune posting lists that cannot possibly contribute to the top results
-    ///  Assumes longest posting list is at the head of the posting list iterators
+    /// Assumes longest posting list is at the head of the posting list iterators
     /// Returns true if the longest posting list was pruned
     pub fn prune_longest_posting_list(&mut self, min_score: f32) -> bool {
+        // compute skip target before acquiring mutable reference to posting list iterator
         let skip_to = if self.postings_iterators.len() == 1 {
             // if there is only one posting list iterator, we can skip to the end
             None
         } else {
-            // otherwise, we skip to the next element in the next longest posting list
-            let next_posting_iterator = &self.postings_iterators[1];
-            let next_value = next_posting_iterator.posting_list_iterator.peek();
-            next_value.map(|element| element.id)
+            // otherwise, we skip to the next min elements in the remaining posting list
+            Self::next_min(&self.postings_iterators[1..])
         };
+
         let posting_iterator = &mut self.postings_iterators[0];
         let posting_query_offset = posting_iterator.query_weight_offset;
         if let Some(element) = posting_iterator.posting_list_iterator.peek() {
@@ -168,13 +170,18 @@ impl<'a> SearchContext<'a> {
             let max_score_contribution =
                 max_weight_from_list * self.query.weights[posting_query_offset];
             if max_score_contribution < min_score {
-                match skip_to {
-                    None => posting_iterator.posting_list_iterator.skip_to_end(),
-                    Some(skip_to) => posting_iterator.posting_list_iterator.skip_to(skip_to),
+                return match skip_to {
+                    None => {
+                        posting_iterator.posting_list_iterator.skip_to_end();
+                        true
+                    }
+                    Some(skip_to) => {
+                        let moved = posting_iterator.posting_list_iterator.skip_to(skip_to);
+                        moved.is_some()
+                    }
                 };
-                return true;
             }
-        };
+        }
         // no pruning occurred
         false
     }
