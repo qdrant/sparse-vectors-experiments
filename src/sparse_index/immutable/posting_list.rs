@@ -98,7 +98,7 @@ impl<'a> PostingListIterator<'a> {
         }
     }
 
-    pub fn len_left(&self) -> usize {
+    pub fn len_to_end(&self) -> usize {
         self.posting_list.elements.len() - self.current_index
     }
 

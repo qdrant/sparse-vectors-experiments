@@ -34,14 +34,13 @@ impl InvertedIndexBuilder {
         keys.sort();
 
         let last_key = *keys.last().unwrap_or(&0);
-
         // Allocate postings of max key size
         let mut postings = Vec::new();
-        postings.resize(last_key as usize, PostingList::default());
+        postings.resize(last_key as usize + 1, PostingList::default());
 
         // Move postings from hashmap to postings vector
         for key in keys {
-            postings.insert(key as usize, self.postings.remove(&key).unwrap());
+            postings[key as usize] = self.postings.remove(&key).unwrap();
         }
         InvertedIndex { postings }
     }

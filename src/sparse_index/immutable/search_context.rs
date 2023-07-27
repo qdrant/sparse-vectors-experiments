@@ -124,8 +124,8 @@ impl<'a> SearchContext<'a> {
         // decreasing order
         self.postings_iterators.sort_by(|a, b| {
             b.posting_list_iterator
-                .len_left()
-                .cmp(&a.posting_list_iterator.len_left())
+                .len_to_end()
+                .cmp(&a.posting_list_iterator.len_to_end())
         });
     }
 
@@ -383,7 +383,7 @@ mod tests {
         assert_eq!(
             search_context.postings_iterators[0]
                 .posting_list_iterator
-                .len_left(),
+                .len_to_end(),
             9
         );
         assert_eq!(
@@ -396,14 +396,14 @@ mod tests {
         assert_eq!(
             search_context.postings_iterators[0]
                 .posting_list_iterator
-                .len_left(),
+                .len_to_end(),
             8
         );
         assert!(!search_context.prune_longest_posting_list(30.0));
         assert_eq!(
             search_context.postings_iterators[0]
                 .posting_list_iterator
-                .len_left(),
+                .len_to_end(),
             8
         );
 
@@ -417,14 +417,14 @@ mod tests {
         assert_eq!(
             search_context.postings_iterators[0]
                 .posting_list_iterator
-                .len_left(),
+                .len_to_end(),
             7
         );
         assert!(!search_context.prune_longest_posting_list(30.0));
         assert_eq!(
             search_context.postings_iterators[0]
                 .posting_list_iterator
-                .len_left(),
+                .len_to_end(),
             7
         );
 
@@ -439,14 +439,14 @@ mod tests {
         assert_eq!(
             search_context.postings_iterators[0]
                 .posting_list_iterator
-                .len_left(),
+                .len_to_end(),
             6
         );
         assert!(search_context.prune_longest_posting_list(30.0));
         assert_eq!(
             search_context.postings_iterators[0]
                 .posting_list_iterator
-                .len_left(),
+                .len_to_end(),
             0
         );
     }
