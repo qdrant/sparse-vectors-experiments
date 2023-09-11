@@ -330,7 +330,7 @@ mod tests {
                     let posting_list = immutable_index.get(index).unwrap();
                     let elem_index = posting_list
                         .elements
-                        .binary_search_by(|elem| elem.id.cmp(record_id));
+                        .binary_search_by(|elem| elem.record_id.cmp(record_id));
                     let elem = posting_list.elements[elem_index.unwrap()];
                     // immutable_index contains correct weight and record_id for dimension index
                     assert_eq!(elem.weight, stored_weight);
