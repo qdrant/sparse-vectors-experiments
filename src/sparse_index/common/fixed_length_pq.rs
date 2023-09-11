@@ -1,13 +1,14 @@
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
 use std::fmt::Debug;
+use std::num::NonZeroUsize;
 
 /// This is a MinHeap by default - it will keep the largest elements, pop smallest
 /// Extracted from qdrant repo
 #[derive(Clone, Debug)]
 pub struct FixedLengthPriorityQueue<T: Ord> {
     heap: BinaryHeap<Reverse<T>>,
-    length: usize,
+    length: NonZeroUsize,
 }
 
 impl<T: Ord> Default for FixedLengthPriorityQueue<T> {
@@ -19,14 +20,13 @@ impl<T: Ord> Default for FixedLengthPriorityQueue<T> {
 impl<T: Ord> FixedLengthPriorityQueue<T> {
     pub fn new(length: usize) -> Self {
         assert!(length > 0);
-        FixedLengthPriorityQueue::<T> {
-            heap: BinaryHeap::with_capacity(length + 1),
-            length,
-        }
+        let heap = BinaryHeap::with_capacity(length + 1);
+        let length = NonZeroUsize::new(length).unwrap();
+        FixedLengthPriorityQueue::<T> { heap, length }
     }
 
     pub fn push(&mut self, value: T) -> Option<T> {
-        if self.heap.len() < self.length {
+        if self.heap.len() < self.length.into() {
             self.heap.push(Reverse(value));
             return None;
         }
