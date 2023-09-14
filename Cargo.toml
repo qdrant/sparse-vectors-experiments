@@ -4,8 +4,12 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 ordered-float = "3.9.1"
+memmap2 = "0.7.1"
+parking_lot = "0.12.1"
+tempfile = "3.8.0"
 
 [dev-dependencies]
 quickcheck = "1"
