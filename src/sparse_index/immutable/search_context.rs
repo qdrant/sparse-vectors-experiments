@@ -123,6 +123,10 @@ impl<'a> SearchContext<'a> {
     }
 
     pub fn search(&mut self) -> Vec<ScoredCandidate> {
+        if self.postings_iterators.is_empty() {
+            return Vec::new();
+        }
+
         while let Some(candidate) = self.advance() {
             // push candidate to result queue
             self.result_queue.push(candidate);
