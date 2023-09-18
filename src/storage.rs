@@ -1,7 +1,8 @@
 use crate::sparse_index::common::scored_candidate::ScoredCandidate;
 use crate::sparse_index::common::types::RecordId;
 use crate::sparse_index::common::vector::SparseVector;
-use crate::sparse_index::immutable::inverted_index::{InvertedIndex, InvertedIndexBuilder};
+use crate::sparse_index::immutable::inverted_index::inverted_index_ram::InvertedIndexBuilder;
+use crate::sparse_index::immutable::inverted_index::InvertedIndex;
 use crate::sparse_index::immutable::posting_list::PostingBuilder;
 use crate::sparse_index::immutable::search_context::SearchContext;
 use ordered_float::OrderedFloat;
@@ -87,7 +88,7 @@ impl SparseVectorStorage {
             }
             inverted_index_builder.add(*position, posting_list_builder.build());
         }
-        self.immutable_index = Some(inverted_index_builder.build());
+        self.immutable_index = Some(InvertedIndex::Ram(inverted_index_builder.build()));
     }
 
     /// Panics if vector_id is out of bounds
@@ -206,33 +207,36 @@ impl SparseVectorStorage {
         let mut min_posting_list_size_index = 0;
 
         let index = self.immutable_index.as_ref().unwrap();
-        let mut index_size = 0;
-        for (k, posting) in index.postings.iter().enumerate() {
-            let size = posting.elements.len();
-            // exclude empty placeholder posting lists
-            if size > 0 {
-                index_size += 1;
-                if size > max_posting_list_size {
-                    max_posting_list_size = size;
-                    max_posting_list_size_index = k;
-                }
-                if size < min_posting_list_size {
-                    min_posting_list_size = size;
-                    min_posting_list_size_index = k;
+        // stats only for ram index
+        if let InvertedIndex::Ram(index) = index {
+            let mut index_size = 0;
+            for (k, posting) in index.postings.iter().enumerate() {
+                let size = posting.elements.len();
+                // exclude empty placeholder posting lists
+                if size > 0 {
+                    index_size += 1;
+                    if size > max_posting_list_size {
+                        max_posting_list_size = size;
+                        max_posting_list_size_index = k;
+                    }
+                    if size < min_posting_list_size {
+                        min_posting_list_size = size;
+                        min_posting_list_size_index = k;
+                    }
                 }
             }
-        }
 
-        println!("\nImmutable sparse vector statistics:");
-        println!("Index size: {} keys", index_size);
-        println!(
-            "Max posting list size for key {} with {} vector ids",
-            max_posting_list_size_index, max_posting_list_size
-        );
-        println!(
-            "Min posting list size for key {} with {} vector ids",
-            min_posting_list_size_index, min_posting_list_size
-        );
+            println!("\nImmutable sparse vector statistics:");
+            println!("Index size: {} keys", index_size);
+            println!(
+                "Max posting list size for key {} with {} vector ids",
+                max_posting_list_size_index, max_posting_list_size
+            );
+            println!(
+                "Min posting list size for key {} with {} vector ids",
+                min_posting_list_size_index, min_posting_list_size
+            );
+        }
     }
 
     pub fn print_data_statistics(&self) {
