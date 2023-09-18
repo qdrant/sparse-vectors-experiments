@@ -1,9 +1,11 @@
 use std::mem::size_of;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use crate::sparse_index::common::file_operations::{atomic_save_json, read_json};
 use crate::sparse_index::common::madvise;
 use memmap2::{Mmap, MmapMut};
+use serde::{Deserialize, Serialize};
 
 use super::inverted_index_ram::InvertedIndexRam;
 use crate::sparse_index::common::mmap_ops::{
@@ -13,10 +15,18 @@ use crate::sparse_index::common::types::DimId;
 use crate::sparse_index::immutable::posting_list::PostingElement;
 
 const POSTING_HEADER_SIZE: usize = size_of::<PostingListFileHeader>();
+const INDEX_FILE_NAME: &str = "index.data";
+const INDEX_CONFIG_FILE_NAME: &str = "index_config.json";
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
+pub struct InvertedIndexFileHeader {
+    pub posting_count: usize,
+}
 
 /// Inverted flatten index from dimension id to posting list
 pub struct InvertedIndexMmap {
     mmap: Arc<Mmap>,
+    file_header: InvertedIndexFileHeader,
 }
 
 #[derive(Default, Clone)]
@@ -26,8 +36,19 @@ struct PostingListFileHeader {
 }
 
 impl InvertedIndexMmap {
+    pub fn index_file_path(path: &Path) -> PathBuf {
+        path.join(INDEX_FILE_NAME)
+    }
+
+    pub fn index_config_file_path(path: &Path) -> PathBuf {
+        path.join(INDEX_CONFIG_FILE_NAME)
+    }
+
     pub fn get(&self, id: &DimId) -> Option<&[PostingElement]> {
-        // TODO: check if id is in range
+        if *id > self.file_header.posting_count as DimId {
+            return None;
+        }
+
         let header = transmute_from_u8::<PostingListFileHeader>(
             &self.mmap
                 [*id as usize * POSTING_HEADER_SIZE..(*id as usize + 1) * POSTING_HEADER_SIZE],
@@ -41,28 +62,49 @@ impl InvertedIndexMmap {
         inverted_index_ram: &InvertedIndexRam,
         path: P,
     ) -> std::io::Result<Self> {
-        let file_length = Self::calculate_file_length(inverted_index_ram);
-        Self::create_and_ensure_length(path.as_ref(), file_length)?;
-        let mut mmap = Self::open_write_mmap(path.as_ref())?;
+        let (total_posting_headers_size, total_posting_elements_size) =
+            Self::calculate_file_length(inverted_index_ram);
+        let file_length = total_posting_headers_size + total_posting_elements_size;
+        let file_path = Self::index_file_path(path.as_ref());
+        Self::create_and_ensure_length(file_path.as_ref(), file_length)?;
 
-        Self::save_posting_headers(&mut mmap, inverted_index_ram);
+        let mut mmap = Self::open_write_mmap(file_path.as_ref())?;
+        madvise::madvise(&mmap, madvise::get_global())?;
 
-        Self::save_posting_elements(&mut mmap, inverted_index_ram);
+        // file index data
+        Self::save_posting_headers(&mut mmap, inverted_index_ram, total_posting_headers_size);
+        Self::save_posting_elements(&mut mmap, inverted_index_ram, total_posting_headers_size);
+
+        let posting_count = inverted_index_ram.postings.len();
+
+        // finalize data with index file.
+        let file_header = InvertedIndexFileHeader { posting_count };
+        let config_file_path = Self::index_config_file_path(path.as_ref());
+        atomic_save_json(&config_file_path, &file_header)?;
 
         Ok(Self {
             mmap: Arc::new(mmap.make_read_only()?),
+            file_header,
         })
     }
 
     pub fn load<P: AsRef<Path>>(path: P) -> std::io::Result<Self> {
-        let mmap = Self::open_read_mmap(path.as_ref())?;
+        let file_path = Self::index_file_path(path.as_ref());
+        let mmap = Self::open_read_mmap(file_path.as_ref())?;
         madvise::madvise(&mmap, madvise::get_global())?;
+        // read from index file
+        let config_file_path = Self::index_config_file_path(path.as_ref());
+        // if the file header does not exist, the index is malformed
+        let file_header: InvertedIndexFileHeader = read_json(&config_file_path)?;
         Ok(Self {
             mmap: Arc::new(mmap),
+            file_header,
         })
     }
 
-    fn calculate_file_length(inverted_index_ram: &InvertedIndexRam) -> usize {
+    /// Calculate file length in bytes
+    /// Returns (posting headers size, posting elements size)
+    fn calculate_file_length(inverted_index_ram: &InvertedIndexRam) -> (usize, usize) {
         let total_posting_headers_size = inverted_index_ram.postings.len() * POSTING_HEADER_SIZE;
 
         let mut total_posting_elements_size = 0;
@@ -70,12 +112,14 @@ impl InvertedIndexMmap {
             total_posting_elements_size += posting.elements.len() * size_of::<PostingElement>();
         }
 
-        total_posting_headers_size + total_posting_elements_size
+        (total_posting_headers_size, total_posting_elements_size)
     }
 
-    fn save_posting_headers(mmap: &mut MmapMut, inverted_index_ram: &InvertedIndexRam) {
-        let total_posting_headers_size = inverted_index_ram.postings.len() * POSTING_HEADER_SIZE;
-
+    fn save_posting_headers(
+        mmap: &mut MmapMut,
+        inverted_index_ram: &InvertedIndexRam,
+        total_posting_headers_size: usize,
+    ) {
         let mut elements_offset: usize = total_posting_headers_size;
         for (id, posting) in inverted_index_ram.postings.iter().enumerate() {
             let posting_elements_size = posting.elements.len() * size_of::<PostingElement>();
@@ -93,10 +137,11 @@ impl InvertedIndexMmap {
         }
     }
 
-    fn save_posting_elements(mmap: &mut MmapMut, inverted_index_ram: &InvertedIndexRam) {
-        // todo: avoid total_posting_headers_size duplication
-        let total_posting_headers_size = inverted_index_ram.postings.len() * POSTING_HEADER_SIZE;
-
+    fn save_posting_elements(
+        mmap: &mut MmapMut,
+        inverted_index_ram: &InvertedIndexRam,
+        total_posting_headers_size: usize,
+    ) {
         let mut offset = total_posting_headers_size;
         for posting in &inverted_index_ram.postings {
             // save posting element
@@ -127,7 +172,6 @@ impl InvertedIndexMmap {
         unsafe { MmapMut::map_mut(&file) }
     }
 
-    // OOOhhhh noo, we don't want tyo copypaste here!!!!!!
     pub fn create_and_ensure_length(path: &Path, length: usize) -> std::io::Result<()> {
         let file = std::fs::OpenOptions::new()
             .read(true)
@@ -140,7 +184,7 @@ impl InvertedIndexMmap {
     }
 }
 
-// To add to qdrant
+// To add to qdrant codebase
 pub fn transmute_from_u8<T>(v: &[u8]) -> &T {
     unsafe { &*(v.as_ptr() as *const T) }
 }
@@ -189,18 +233,15 @@ mod tests {
             .add(3, PostingList::from(vec![(1, 10.0), (2, 20.0), (3, 30.0)]))
             .build();
 
-        let tmp_path = Builder::new()
-            .prefix("test_serialize_dir")
-            .tempfile()
-            .unwrap();
+        let tmp_dir_path = Builder::new().prefix("test_index_dir").tempdir().unwrap();
 
         {
             let inverted_index_mmap =
-                InvertedIndexMmap::convert_and_save(&inverted_index_ram, &tmp_path).unwrap();
+                InvertedIndexMmap::convert_and_save(&inverted_index_ram, &tmp_dir_path).unwrap();
 
             compare_indexes(&inverted_index_ram, &inverted_index_mmap);
         }
-        let inverted_index_mmap = InvertedIndexMmap::load(&tmp_path).unwrap();
+        let inverted_index_mmap = InvertedIndexMmap::load(&tmp_dir_path).unwrap();
 
         compare_indexes(&inverted_index_ram, &inverted_index_mmap);
     }
