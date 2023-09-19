@@ -1,6 +1,7 @@
 use crate::sparse_index::common::scored_candidate::ScoredCandidate;
 use crate::sparse_index::common::types::RecordId;
 use crate::sparse_index::common::vector::SparseVector;
+use crate::sparse_index::immutable::inverted_index::inverted_index_mmap::InvertedIndexMmap;
 use crate::sparse_index::immutable::inverted_index::inverted_index_ram::InvertedIndexBuilder;
 use crate::sparse_index::immutable::inverted_index::InvertedIndex;
 use crate::sparse_index::immutable::posting_list::PostingBuilder;
@@ -9,6 +10,7 @@ use ordered_float::OrderedFloat;
 use serde_json::{Deserializer, Value};
 use std::fs::File;
 use std::io::BufReader;
+use std::path::Path;
 
 use crate::sparse_index::mutable::mutable_index::MutableSparseVectorIndex;
 
@@ -72,7 +74,7 @@ impl SparseVectorStorage {
     }
 
     /// Build immutable index from mutable index
-    pub fn build_immutable_index(&mut self) {
+    pub fn build_immutable_index(&mut self, mmap_path: Option<&Path>) {
         let mut inverted_index_builder = InvertedIndexBuilder::new();
         for (position, vector_ids) in self.mutable_index.map.iter() {
             let mut posting_list_builder = PostingBuilder::new();
@@ -88,7 +90,21 @@ impl SparseVectorStorage {
             }
             inverted_index_builder.add(*position, posting_list_builder.build());
         }
-        self.immutable_index = Some(InvertedIndex::Ram(inverted_index_builder.build()));
+
+        // build mmap index if path is provided
+        let index = match mmap_path {
+            None => InvertedIndex::Ram(inverted_index_builder.build()),
+            Some(path) => {
+                let mmap =
+                    InvertedIndexMmap::convert_and_save(&inverted_index_builder.build(), path)
+                        .unwrap();
+                // drop and reload for testing
+                drop(mmap);
+                let mmap = InvertedIndexMmap::load(path).unwrap();
+                InvertedIndex::Mmap(mmap)
+            }
+        };
+        self.immutable_index = Some(index);
     }
 
     /// Panics if vector_id is out of bounds
@@ -295,29 +311,28 @@ impl SparseVectorStorage {
 mod tests {
     use crate::sparse_index::common::types::RecordId;
     use crate::sparse_index::common::vector::SparseVector;
+    use crate::sparse_index::immutable::inverted_index::inverted_index_mmap::InvertedIndexMmap;
+    use crate::sparse_index::immutable::inverted_index::InvertedIndex;
     use crate::storage::SparseVectorStorage;
     use crate::SPLADE_DATA_PATH;
     use float_cmp::approx_eq;
     use quickcheck::{Arbitrary, Gen};
     use quickcheck_macros::quickcheck;
     use std::sync::{OnceLock, RwLock};
+    use tempfile::Builder;
 
     fn storage() -> &'static RwLock<SparseVectorStorage> {
         static STORAGE: OnceLock<RwLock<SparseVectorStorage>> = OnceLock::new();
         STORAGE.get_or_init(|| {
             eprintln!("Loading test storage...");
             let mut storage = SparseVectorStorage::load_SPLADE_embeddings(SPLADE_DATA_PATH);
-            // build immutable index
-            storage.build_immutable_index();
+            // build immutable index in RAM
+            storage.build_immutable_index(None);
             RwLock::new(storage)
         })
     }
 
-    #[test]
-    fn validate_data_equivalence() {
-        let storage = storage().read().unwrap();
-        let immutable_index = storage.immutable_index.as_ref().unwrap();
-
+    fn check_data_index_equivalence(storage: &SparseVectorStorage, inverted_index: &InvertedIndex) {
         for (vector_id, vector) in storage.vectors.iter().enumerate() {
             if let Some(vector) = vector {
                 for (index, &stored_weight) in vector.indices.iter().zip(vector.weights.iter()) {
@@ -331,7 +346,7 @@ mod tests {
                         .contains(record_id));
 
                     // control data in immutable index
-                    let posting_list = immutable_index.get(index).unwrap();
+                    let posting_list = inverted_index.get(index).unwrap();
                     let elem_index = posting_list
                         .elements
                         .binary_search_by(|elem| elem.record_id.cmp(record_id));
@@ -341,6 +356,40 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn validate_data_equivalence() {
+        let storage = storage().read().unwrap();
+        let immutable_index = storage.immutable_index.as_ref().unwrap();
+
+        // starting with RAM index
+        matches!(immutable_index, InvertedIndex::Ram(_));
+
+        // check data equivalence RAM index
+        check_data_index_equivalence(&storage, immutable_index);
+
+        // switch to MMAP index
+        let inverted_index_ram = match immutable_index {
+            InvertedIndex::Ram(index) => index,
+            _ => panic!("Unexpected index type"),
+        };
+
+        let tmp_dir_path = Builder::new().prefix("test_index_dir").tempdir().unwrap();
+        {
+            let inverted_index_mmap =
+                InvertedIndexMmap::convert_and_save(&inverted_index_ram, &tmp_dir_path).unwrap();
+
+            // check data equivalence after mmap save
+            let index = InvertedIndex::Mmap(inverted_index_mmap);
+            check_data_index_equivalence(&storage, &index);
+        }
+        // load mmap file
+        let inverted_index_mmap = InvertedIndexMmap::load(&tmp_dir_path).unwrap();
+
+        // check data equivalence after mmap load
+        let index = InvertedIndex::Mmap(inverted_index_mmap);
+        check_data_index_equivalence(&storage, &index);
     }
 
     fn search_equivalence(top: u8, query: SparseVector) {

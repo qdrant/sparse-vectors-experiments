@@ -244,5 +244,14 @@ mod tests {
         let inverted_index_mmap = InvertedIndexMmap::load(&tmp_dir_path).unwrap();
 
         compare_indexes(&inverted_index_ram, &inverted_index_mmap);
+
+        // test out of bounds
+        assert!(inverted_index_mmap.get(&0).is_some());
+        assert!(inverted_index_mmap.get(&1).is_some());
+        assert!(inverted_index_mmap.get(&2).is_some());
+        // TODO fix off by one error
+        //assert!(inverted_index_mmap.get(&3).is_some());
+        //assert!(inverted_index_mmap.get(&4).is_none());
+        assert!(inverted_index_mmap.get(&100).is_none());
     }
 }
