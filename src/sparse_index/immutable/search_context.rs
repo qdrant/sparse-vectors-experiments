@@ -25,9 +25,9 @@ impl<'a> SearchContext<'a> {
         let mut postings_iterators = Vec::new();
 
         for (query_weight_offset, id) in query.indices.iter().enumerate() {
-            if let Some(posting) = inverted_index.get(id) {
+            if let Some(posting_list_iterator) = inverted_index.get(id) {
                 postings_iterators.push(IndexedPostingListIterator {
-                    posting_list_iterator: PostingListIterator::new(posting),
+                    posting_list_iterator,
                     query_weight_offset,
                 });
             }
@@ -187,16 +187,18 @@ impl<'a> SearchContext<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sparse_index::immutable::inverted_index::InvertedIndexBuilder;
+    use crate::sparse_index::immutable::inverted_index::inverted_index_ram::InvertedIndexBuilder;
     use crate::sparse_index::immutable::posting_list::PostingList;
 
     #[test]
     fn advance_basic_test() {
-        let inverted_index = InvertedIndexBuilder::new()
+        let inverted_index_ram = InvertedIndexBuilder::new()
             .add(1, PostingList::from(vec![(1, 10.0), (2, 20.0), (3, 30.0)]))
             .add(2, PostingList::from(vec![(1, 10.0), (2, 20.0), (3, 30.0)]))
             .add(3, PostingList::from(vec![(1, 10.0), (2, 20.0), (3, 30.0)]))
             .build();
+
+        let inverted_index = &InvertedIndex::Ram(inverted_index_ram);
 
         let mut search_context = SearchContext::new(
             SparseVector {
@@ -204,7 +206,7 @@ mod tests {
                 weights: vec![1.0, 1.0, 1.0],
             },
             10,
-            &inverted_index,
+            inverted_index,
         );
 
         assert_eq!(
@@ -232,11 +234,13 @@ mod tests {
 
     #[test]
     fn search() {
-        let inverted_index = InvertedIndexBuilder::new()
+        let inverted_index_ram = InvertedIndexBuilder::new()
             .add(1, PostingList::from(vec![(1, 10.0), (2, 20.0), (3, 30.0)]))
             .add(2, PostingList::from(vec![(1, 10.0), (2, 20.0), (3, 30.0)]))
             .add(3, PostingList::from(vec![(1, 10.0), (2, 20.0), (3, 30.0)]))
             .build();
+
+        let inverted_index = InvertedIndex::Ram(inverted_index_ram);
 
         let mut search_context = SearchContext::new(
             SparseVector {
@@ -286,6 +290,8 @@ mod tests {
             .add(2, PostingList::from(vec![(1, 10.0), (2, 20.0), (3, 30.0)]))
             .add(3, PostingList::from(vec![(1, 10.0), (2, 20.0), (3, 30.0)]))
             .build();
+
+        let inverted_index = &InvertedIndex::Ram(inverted_index);
 
         let mut search_context = SearchContext::new(
             SparseVector {
@@ -348,7 +354,7 @@ mod tests {
 
     #[test]
     fn prune_test() {
-        let inverted_index = InvertedIndexBuilder::new()
+        let inverted_index_ram = InvertedIndexBuilder::new()
             .add(
                 1,
                 PostingList::from(vec![
@@ -366,6 +372,8 @@ mod tests {
             .add(2, PostingList::from(vec![(1, 10.0), (2, 20.0), (3, 30.0)]))
             .add(3, PostingList::from(vec![(1, 10.0), (2, 20.0), (3, 30.0)]))
             .build();
+
+        let inverted_index = &InvertedIndex::Ram(inverted_index_ram);
 
         let mut search_context = SearchContext::new(
             SparseVector {
